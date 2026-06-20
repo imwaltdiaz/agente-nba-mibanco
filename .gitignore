@@ -1,0 +1,25 @@
+# Entorno virtual y temporales de Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+
+# Excluir datos (iathon_mibanco_nba/data/)
+iathon_mibanco_nba/data/01_raw/*
+!iathon_mibanco_nba/data/01_raw/.gitkeep
+
+iathon_mibanco_nba/data/02_interim/*
+!iathon_mibanco_nba/data/02_interim/.gitkeep
+
+iathon_mibanco_nba/data/03_processed/*
+!iathon_mibanco_nba/data/03_processed/.gitkeep
+
+# Excluir modelos entrenados (iathon_mibanco_nba/models/)
+iathon_mibanco_nba/models/*
+!iathon_mibanco_nba/models/.gitkeep
+
+# Excluir logs locales (iathon_mibanco_nba/logs/)
+iathon_mibanco_nba/logs/*
+!iathon_mibanco_nba/logs/.gitkeep
