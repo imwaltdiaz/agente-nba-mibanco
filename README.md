@@ -84,3 +84,5 @@ Para ejecutar el flujo completo una vez implementada la lógica interna de los m
 - **Modularidad**: Cada etapa está desacoplada mediante entradas/salidas en archivos locales intermedios (`data/02_interim/`), facilitando la depuración y mantenimiento independiente del modelo de Machine Learning y el modelo de Investigación de Operaciones.
 - **Robustez**: Se define la arquitectura de un T-Learner para predecir múltiples tratamientos de manera robusta, evitando dependencias estrictas de compiladores C++ nativos en producción.
 - **Escabilidad**: La optimización con PuLP puede configurarse con solvers externos comerciales (ej. Gurobi, CPLEX) o libres (CBC por defecto) si la escala de clientes crece por encima de las centenas de miles.
+
+commit dev
