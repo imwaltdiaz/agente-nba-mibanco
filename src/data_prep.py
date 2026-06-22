@@ -165,7 +165,7 @@ def build_treated_rows(
 
     # Merge con features del cliente (left para conservar todos los contactos)
     cols_cliente = [
-        "cliente_id", "edad", "score_riesgo", "prob_default",
+        "cliente_id", "region", "zona", "edad", "score_riesgo", "prob_default",
         "num_atrasos_previos", "dias_mora_promedio", "ratio_pago",
         "ultimo_pago_dias", "es_digital", "uso_app", "uso_whatsapp",
         "interaccion_digital_score", "canal_whatsapp", "canal_sms",
@@ -182,6 +182,7 @@ def build_treated_rows(
     output_cols = (
         ["contacto_id", "cliente_id", "credito_id"]
         + config.FEATURE_COLS
+        + config.OPERATIONAL_COLS
         + [config.TREATMENT_COL, "Deuda_Expuesta", config.TARGET_COL]
     )
 
@@ -259,7 +260,7 @@ def build_control_rows(
 
     # Merge con features del cliente
     cols_cliente = [
-        "cliente_id", "edad", "score_riesgo", "prob_default",
+        "cliente_id", "region", "zona", "edad", "score_riesgo", "prob_default",
         "num_atrasos_previos", "dias_mora_promedio", "ratio_pago",
         "ultimo_pago_dias", "es_digital", "uso_app", "uso_whatsapp",
         "interaccion_digital_score", "canal_whatsapp", "canal_sms",
@@ -276,6 +277,7 @@ def build_control_rows(
     output_cols = (
         ["contacto_id", "cliente_id", "credito_id"]
         + config.FEATURE_COLS
+        + config.OPERATIONAL_COLS
         + [config.TREATMENT_COL, "Deuda_Expuesta", config.TARGET_COL]
     )
     output_cols = [c for c in output_cols if c in df_control.columns]
@@ -405,7 +407,7 @@ def build_abt_inferencia(
     # Enriquecer con features del cliente
     df_clientes_feat = engineer_client_features(df_clientes)
     cols_cliente = [
-        "cliente_id", "edad", "score_riesgo", "prob_default",
+        "cliente_id", "region", "zona", "edad", "score_riesgo", "prob_default",
         "num_atrasos_previos", "dias_mora_promedio", "ratio_pago",
         "ultimo_pago_dias", "es_digital", "uso_app", "uso_whatsapp",
         "interaccion_digital_score", "canal_whatsapp", "canal_sms",
@@ -429,8 +431,8 @@ def build_abt_inferencia(
     # Momento del contacto: valor neutro (Tarde = 1)
     df_inf["momento_contacto"] = config.MOMENTO_DEFAULT
 
-    # Seleccionar columnas finales: cliente_id + FEATURE_COLS + Deuda_Expuesta
-    output_cols = ["cliente_id"] + config.FEATURE_COLS + ["Deuda_Expuesta"]
+    # Seleccionar columnas finales: cliente_id + features + operativas + Deuda_Expuesta
+    output_cols = ["cliente_id"] + config.FEATURE_COLS + config.OPERATIONAL_COLS + ["Deuda_Expuesta"]
     output_cols = [c for c in output_cols if c in df_inf.columns]
     df_inf = df_inf[output_cols]
 

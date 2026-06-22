@@ -47,6 +47,10 @@ TREATMENT_MAP = {
 # Canales de tratamiento activo (excluye control)
 ACTIVE_CHANNELS = ["whatsapp", "sms", "llamada", "campo"]
 
+# Columnas que no entran al modelo causal, pero se arrastran para la
+# planificacion operativa posterior: agenda, campo, rutas y reporteria.
+OPERATIONAL_COLS = ["region", "zona"]
+
 # ---------------------------------------------------------------------------
 # FEATURES DEL MODELO — Lista simétrica usada en TRAIN e INFERENCIA
 #

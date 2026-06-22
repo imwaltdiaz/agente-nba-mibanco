@@ -205,16 +205,14 @@ class TestCATEScores:
 
     @pytest.mark.skipif(not cate_exists(), reason="cate_scores.parquet no existe aún")
     def test_cate_scores_schema(self, cate_scores):
-        """cate_scores.parquet debe tener exactamente las 6 columnas del contrato."""
-        expected_cols = [
+        """cate_scores.parquet debe tener las columnas minimas del contrato."""
+        required_cols = [
             "Cliente_ID", "Deuda_Expuesta",
             "Uplift_WhatsApp", "Uplift_SMS", "Uplift_Llamada", "Uplift_Campo",
         ]
         assert cate_scores is not None, "cate_scores fixture retornó None inesperadamente."
-        missing = [c for c in expected_cols if c not in cate_scores.columns]
-        extra = [c for c in cate_scores.columns if c not in expected_cols]
+        missing = [c for c in required_cols if c not in cate_scores.columns]
         assert not missing, f"Columnas faltantes en cate_scores: {missing}"
-        assert not extra, f"Columnas extra en cate_scores: {extra}"
 
     @pytest.mark.skipif(not cate_exists(), reason="cate_scores.parquet no existe aún")
     def test_cate_scores_no_nulls(self, cate_scores):

@@ -148,6 +148,13 @@ def compute_cate_scores(model: object, df_inf: pd.DataFrame) -> pd.DataFrame:
         "Uplift_Llamada": cate[:, 2],
         "Uplift_Campo": cate[:, 3],
     })
+
+    # Atributos operativos para la agenda posterior. No se usan como features
+    # del modelo, pero permiten programar campo/llamada por region y zona.
+    for col in config.OPERATIONAL_COLS:
+        if col in df_inf.columns:
+            output_col = col.capitalize()
+            df_scores[output_col] = df_inf[col].values
     
     # Estadísticas descriptivas
     uplift_cols = ["Uplift_WhatsApp", "Uplift_SMS", "Uplift_Llamada", "Uplift_Campo"]
