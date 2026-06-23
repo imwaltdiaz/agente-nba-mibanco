@@ -591,9 +591,9 @@ def main():
         print(f"  - Campo urbano: max {capacities['campo_visitas_urbano_por_asesor_dia']} visitas asesor/dia")
         print(f"  - Campo rural:  max {capacities['campo_visitas_rural_por_asesor_dia']} visitas asesor/dia")
         print(f"  - Agenda sin capacidad: {(df_scheduled['Estado_Agenda'] == 'SIN_CAPACIDAD').sum()}")
-        print(f"\n 💰 Retorno Incremental Esperado (ROI): S/ {retorno_incremental:,.2f}")
-        print(f" 💾 Canales guardados en: {channel_assignment_path}")
-        print(f" 💾 Agenda final guardada en: {assignment_path}")
+        print(f"\n [ROI] Retorno Incremental Esperado (ROI): S/ {retorno_incremental:,.2f}")
+        print(f" [SAVE] Canales guardados en: {channel_assignment_path}")
+        print(f" [SAVE] Agenda final guardada en: {assignment_path}")
         print("="*60 + "\n")
         
 
@@ -637,7 +637,7 @@ def main():
         print(f"\n Nivel 3: El Valor Real de la Inteligencia Artificial (A/B Test Simulado)")
         print(f"  - VNE con Asignación al Azar   : S/ {vne_azar:,.2f}")
         print(f"  - VNE con Optimizador (IA)     : S/ {vne_total:,.2f}")
-        print(f"  - 🚀 Valor Neto Agregado por IA: S/ {valor_agregado_ia:,.2f}")
+        print(f"  - [IA-VALUE] Valor Neto Agregado por IA: S/ {valor_agregado_ia:,.2f}")
         print(f"    (Esto es dinero puro que Mibanco perdería sin este algoritmo)")
 
     except Exception as e:
