@@ -2,7 +2,7 @@
 app.py - Frontend CobraIQ (Fase D)
 ========================================================================
 Aplicación web interactiva que funciona como interfaz del orquestador NBA.
-Clon exacto en estilo, diseño oscuro y pestañas del Dashboard CobraIQ.
+Clon en diseño, colores y pestañas de la identidad institucional de MiBanco.
 Exhibe de forma dinámica las métricas operativas y las recomendaciones de contacto.
 """
 
@@ -16,6 +16,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
 
 # Agregar raíz del proyecto al path
 ROOT_DIR = Path(__file__).resolve().parent
@@ -25,7 +27,7 @@ import src.config as config
 # Configuración de página
 st.set_page_config(
     page_title="CobraIQ - Control de Cobranza Inteligente",
-    page_icon="🐍",
+    page_icon="💚",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -72,13 +74,40 @@ def load_cate_scores():
     return pd.read_parquet(path)
 
 
+@st.cache_data
+def get_saturation_data():
+    """Carga y procesa la data de entrenamiento para construir la curva de agobio."""
+    path = ROOT_DIR / "data" / "02_interim" / "ABT_Train.parquet"
+    if not path.exists():
+        return None
+    df = pd.read_parquet(path)
+    
+    # Filtrar a canales activos (WhatsApp: 1, SMS: 2, Llamada: 3, Campo: 4)
+    df_active = df[df['canal_contacto'].isin([1, 2, 3, 4])].copy()
+    
+    # Agrupar por canal e intento
+    grouped = df_active.groupby(['canal_contacto', 'intento_num']).agg(
+        tasa_pago=('pago_7d_post_contacto', 'mean'),
+        clientes=('cliente_id', 'count')
+    ).reset_index()
+    
+    # Quedarse con intento_num <= 10 para evitar ruido de colas
+    grouped = grouped[grouped['intento_num'] <= 10]
+    
+    channel_map = {1: 'WhatsApp', 2: 'SMS', 3: 'Llamada', 4: 'Campo'}
+    grouped['Canal'] = grouped['canal_contacto'].map(channel_map)
+    grouped['tasa_pago_pct'] = grouped['tasa_pago'] * 100
+    
+    return grouped
+
+
 # Carga de datasets
 df_scheduled, file_name_loaded = get_latest_data()
 df_clientes = load_client_database()
 df_scores = load_cate_scores()
 
 # ---------------------------------------------------------------------------
-# 2. DISEÑO Y ESTILIZACIÓN (CSS PERSONALIZADO - ESTILO COBRAIQ)
+# 2. DISEÑO Y ESTILIZACIÓN (CSS PERSONALIZADO - IDENTIDAD CLARA MIBANCO)
 # ---------------------------------------------------------------------------
 
 st.markdown("""
@@ -87,33 +116,35 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
     
     html, body, [data-testid="stAppViewContainer"] {
-        background-color: #0F1419 !important;
-        color: #ffffff !important;
+        background-color: #FAFAFA !important;
+        color: #1A3A2A !important;
         font-family: 'Outfit', sans-serif !important;
     }
     
     /* Configuración del Sidebar lateral */
     [data-testid="stSidebar"] {
-        background-color: #1A2332 !important;
-        border-right: 1px solid #2D3748 !important;
+        background-color: #ffffff !important;
+        border-right: 1.5px solid #D5E8DC !important;
     }
     
-    /* Habilitar scroll del sidebar y asegurar estilo del título */
-    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2 {
-        color: #ffffff !important;
+    /* Habilitar scroll del sidebar y asegurar estilo del texto */
+    [data-testid="stSidebar"] * {
+        color: #1A3A2A !important;
     }
     
     /* Ajustes generales de inputs y sliders */
     div[data-baseweb="select"] > div {
-        background-color: #1A2332 !important;
-        color: #ffffff !important;
-        border-color: #2D3748 !important;
+        background-color: #ffffff !important;
+        color: #1A3A2A !important;
+        border: 1.5px solid #D5E8DC !important;
+        border-radius: 8px !important;
     }
     
     input {
-        background-color: #1A2332 !important;
-        color: #ffffff !important;
-        border: 1px solid #2D3748 !important;
+        background-color: #ffffff !important;
+        color: #1A3A2A !important;
+        border: 1.5px solid #D5E8DC !important;
+        border-radius: 8px !important;
     }
     
     /* Menú de Navegación Vertical con Radio Buttons */
@@ -123,13 +154,13 @@ st.markdown("""
         padding-top: 15px;
     }
     div[role="radiogroup"] label {
-        background-color: #161D2B !important;
-        border: 1px solid #2D3748 !important;
-        border-radius: 8px !important;
-        padding: 12px 16px !important;
-        color: #A0AEC0 !important;
+        background-color: #ffffff !important;
+        border: 1.5px solid #D5E8DC !important;
+        border-radius: 10px !important;
+        padding: 10px 14px !important;
+        color: #7A9088 !important;
         cursor: pointer;
-        transition: all 0.25s ease-in-out;
+        transition: all 0.2s ease-in-out;
         display: flex;
         align-items: center;
         width: 100% !important;
@@ -141,17 +172,21 @@ st.markdown("""
     }
     
     div[role="radiogroup"] label[data-checked="true"] {
-        background-color: #2E7D32 !important;
-        border-color: #4CAF50 !important;
+        background-color: #1B8C3E !important;
+        border-color: #1B8C3E !important;
         color: #FFFFFF !important;
         font-weight: 600;
-        box-shadow: 0 4px 10px rgba(76, 175, 80, 0.25);
+        box-shadow: 0 4px 10px rgba(27, 140, 98, 0.2);
+    }
+    
+    div[role="radiogroup"] label[data-checked="true"] span {
+        color: #FFFFFF !important;
     }
     
     div[role="radiogroup"] label:hover {
-        background-color: #1E2D3F !important;
-        border-color: #4CAF50 !important;
-        color: #FFFFFF !important;
+        background-color: #F0F7F3 !important;
+        border-color: #1B8C3E !important;
+        color: #1B8C3E !important;
     }
     
     div[role="radiogroup"] label span {
@@ -159,46 +194,47 @@ st.markdown("""
         font-weight: 500 !important;
     }
 
-    /* Tarjetas KPI y contenedores rounded */
+    /* Tarjetas KPI y contenedores rounded estilo MiBanco */
     .kpi-container {
-        background-color: #1A2332;
-        border: 1px solid #2D3748;
-        border-radius: 10px;
-        padding: 20px;
-        text-align: center;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
-        margin-bottom: 15px;
+        background-color: #ffffff !important;
+        border: 1.5px solid #D5E8DC !important;
+        border-radius: 12px !important;
+        padding: 20px !important;
+        text-align: center !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03) !important;
+        margin-bottom: 15px !important;
     }
     
     .kpi-header {
-        color: #A0AEC0;
-        font-size: 13px;
-        font-weight: 600;
-        text-transform: uppercase;
-        margin-bottom: 6px;
-        letter-spacing: 0.8px;
+        color: #7A9088 !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        text-transform: uppercase !important;
+        margin-bottom: 6px !important;
+        letter-spacing: 0.8px !important;
     }
     
     .kpi-val {
-        color: #ffffff;
-        font-size: 26px;
-        font-weight: 700;
-        margin-bottom: 4px;
+        color: #1A3A2A !important;
+        font-size: 26px !important;
+        font-weight: 700 !important;
+        margin-bottom: 4px !important;
     }
     
     .kpi-subtext {
-        font-size: 12px;
-        font-weight: 500;
+        font-size: 12px !important;
+        font-weight: 500 !important;
     }
     
     /* Contenedor principal de pestañas */
     .stTabs [data-baseweb="tab-list"] {
-        background-color: #1A2332 !important;
+        background-color: #ffffff !important;
+        border: 1.5px solid #D5E8DC !important;
         border-radius: 8px !important;
         padding: 4px !important;
     }
     .stTabs [data-baseweb="tab"] {
-        color: #A0AEC0 !important;
+        color: #7A9088 !important;
         background-color: transparent !important;
         padding: 10px 20px !important;
         border-radius: 6px !important;
@@ -206,7 +242,28 @@ st.markdown("""
     }
     .stTabs [data-baseweb="tab"][aria-selected="true"] {
         color: #FFFFFF !important;
-        background-color: #2E7D32 !important;
+        background-color: #1B8C3E !important;
+    }
+    
+    /* Cabecera institucional con gradiente */
+    .mibanco-header {
+        background: linear-gradient(135deg, #1B8C3E 0%, #25A84E 40%, #4FC97A 70%, #7EDBA0 100%) !important;
+        padding: 2rem !important;
+        border-radius: 16px !important;
+        color: white !important;
+        margin-bottom: 2rem !important;
+        box-shadow: 0 4px 15px rgba(27, 140, 62, 0.15) !important;
+    }
+    .mibanco-header h1 {
+        color: white !important;
+        font-weight: 700 !important;
+        margin-bottom: 0.5rem !important;
+    }
+    .mibanco-header p {
+        color: white !important;
+        opacity: 0.95 !important;
+        font-size: 1.1rem !important;
+        margin: 0 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -216,18 +273,32 @@ st.markdown("""
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
+    # Logotipo oficial SVG de MiBanco recreado
     st.markdown("""
-    <div style="padding: 10px 0 5px 0;">
-        <h1 style="font-size: 32px; font-weight: 700; margin: 0; color: #4CAF50 !important; display: flex; align-items: center; gap: 8px;">
-            🐍 CobraIQ
-        </h1>
-        <div style="font-size: 11px; color: #A0AEC0; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; margin-top: 4px;">
-            Motor Causal de Cobranzas | v2_agenda
-        </div>
+    <div style="display: flex; align-items: center; gap: 8px; padding: 10px 0 5px 0;">
+        <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink: 0;">
+            <!-- Sol central brillante -->
+            <circle cx="18" cy="18" r="5" fill="#FDD700" />
+            <!-- Rayos/Curvas del sol institucionales de MiBanco -->
+            <path d="M18 4V8" stroke="#FDD700" stroke-width="2" stroke-linecap="round"/>
+            <path d="M18 28V32" stroke="#FDD700" stroke-width="2" stroke-linecap="round"/>
+            <path d="M4 18H8" stroke="#FDD700" stroke-width="2" stroke-linecap="round"/>
+            <path d="M28 18H32" stroke="#FDD700" stroke-width="2" stroke-linecap="round"/>
+            <path d="M8.1 8.1L10.9 10.9" stroke="#FDD700" stroke-width="2" stroke-linecap="round"/>
+            <path d="M25.1 25.1L27.9 27.9" stroke="#FDD700" stroke-width="2" stroke-linecap="round"/>
+            <path d="M8.1 27.9L10.9 25.1" stroke="#FDD700" stroke-width="2" stroke-linecap="round"/>
+            <path d="M25.1 10.9L27.9 8.1" stroke="#FDD700" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span style="font-family: 'Segoe UI', Arial, sans-serif; font-size: 26px; font-weight: 800; color: #1B8C3E; letter-spacing: -1.2px; margin: 0; display: inline-block; line-height: 1;">
+            mibanco
+        </span>
+    </div>
+    <div style="font-size: 10px; color: #7A9088; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; margin-top: -2px; margin-left: 2px;">
+        Control de Cobranza Inteligente
     </div>
     """, unsafe_allow_html=True)
     
-    st.markdown("<hr style='margin: 15px 0; border-color: #2D3748;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin: 15px 0; border-color: #D5E8DC;'>", unsafe_allow_html=True)
     
     # Menú de selección vertical
     current_page = st.radio(
@@ -237,7 +308,7 @@ with st.sidebar:
     )
     
     # Meta información en el footer del Sidebar
-    st.markdown("<div style='height: 15vh;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height: 12vh;'></div>", unsafe_allow_html=True)
     
     if df_scheduled is not None:
         total_inf = len(df_scheduled)
@@ -245,38 +316,92 @@ with st.sidebar:
         
         # El ahorro estimado es el VNE de la IA menos el VNE del Azar
         vne_opt = df_scheduled['Valor_Esperado_Neto'].sum()
-        # VNE de asignación aleatoria calculado de forma estática en base a la consola de logs
         vne_azar = 327745.08
         ahorro_estimado = vne_opt - vne_azar
         
         st.markdown(f"""
-        <div style="background-color: #161D2B; border: 1px solid #2D3748; border-radius: 8px; padding: 15px; margin-top: 20px;">
-            <div style="font-size: 11px; color: #A0AEC0; font-weight: 600; text-transform: uppercase; margin-bottom: 10px; letter-spacing: 0.5px; border-bottom: 1px solid #2D3748; padding-bottom: 5px;">
-                Meta-Información
+        <div style="background-color: #ffffff; border: 1.5px solid #D5E8DC; border-radius: 12px; padding: 15px; margin-top: 20px;">
+            <div style="font-size: 11px; color: #7A9088; font-weight: 600; text-transform: uppercase; margin-bottom: 10px; letter-spacing: 0.5px; border-bottom: 1px solid #D5E8DC; padding-bottom: 5px;">
+                Resumen Ejecutivo
             </div>
             <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-                <span style="font-size: 13px; color: #A0AEC0;">Total Clientes:</span>
-                <span style="font-size: 13px; color: #ffffff; font-weight: 600;">{total_inf:,}</span>
+                <span style="font-size: 13px; color: #7A9088;">Total Clientes:</span>
+                <span style="font-size: 13px; color: #1A3A2A; font-weight: 600;">{total_inf:,}</span>
             </div>
             <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-                <span style="font-size: 13px; color: #A0AEC0;">Canal Digital:</span>
-                <span style="font-size: 13px; color: #4CAF50; font-weight: 600;">{pct_digital_inf:.1f}%</span>
+                <span style="font-size: 13px; color: #7A9088;">Canal Digital:</span>
+                <span style="font-size: 13px; color: #1B8C3E; font-weight: 600;">{pct_digital_inf:.1f}%</span>
             </div>
             <div style="display: flex; justify-content: space-between;">
-                <span style="font-size: 13px; color: #A0AEC0;">Valor IA Neto:</span>
-                <span style="font-size: 13px; color: #4CAF50; font-weight: 600;">S/ {ahorro_estimado / 1e6:.2f}M</span>
+                <span style="font-size: 13px; color: #7A9088;">Ahorro Neto IA:</span>
+                <span style="font-size: 13px; color: #1B8C3E; font-weight: 600;">S/ {ahorro_estimado / 1e6:.2f}M</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
     else:
         st.markdown("""
-        <div style="background-color: #2D1A1A; border: 1px solid #FC8181; border-radius: 8px; padding: 15px; margin-top: 20px;">
-            <span style="color: #FC8181; font-size: 13px;">Error: Datos no cargados.</span>
+        <div style="background-color: #FFF5F5; border: 1.5px solid #FC8181; border-radius: 12px; padding: 15px; margin-top: 20px;">
+            <span style="color: #C53030; font-size: 13px;">Error: Datos no cargados.</span>
         </div>
         """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
-# 4. LÓGICA Y CONTENIDO POR PANTALLA
+# DECLARACIÓN DEL DIALOG MODAL (POP-UP MATEMÁTICO)
+# ---------------------------------------------------------------------------
+
+@st.dialog("🔍 Detalle de Cálculos Matemáticos")
+def show_math_details(client_id, debt, canal, cost, vne):
+    st.markdown(f"### 📋 Métricas del Cliente: `{client_id}`")
+    st.write(f"- **Deuda Expuesta**: `S/ {debt:,.2f}` (suma de cuotas vencidas)")
+    st.write(f"- **Canal Asignado por IA**: `{canal}` (costo unitario: `S/ {cost:,.2f}`)")
+    st.write(f"- **Retorno Neto Causal Esperado (VNE)**: `S/ {vne:,.2f}`")
+    
+    st.markdown("---")
+    st.markdown("### 🧮 Ecuación del Valor Neto Esperado (VNE)")
+    st.latex(r"VNE = (\tau_{canal} \times \text{Deuda}) - \text{Costo}_{canal}")
+    st.write("Donde:")
+    st.markdown("- **$\\tau_{canal}$** es el **Uplift Causal (CATE)** del canal sobre el grupo control (T=0).")
+    st.markdown("- **$\\text{Deuda}$** es el monto expuesto al cobro (cuota del cliente).")
+    st.markdown("- **$\\text{Costo}_{canal}$** es el costo unitario de ejecución de la cobranza.")
+    
+    # Cargar detalles CATE
+    if df_scores is not None:
+        c_scores = df_scores[df_scores['Cliente_ID'] == client_id]
+        if not c_scores.empty:
+            row = c_scores.iloc[0]
+            st.markdown("---")
+            st.markdown("### 📊 Desglose de Uplift Causal del Cliente")
+            st.write(f"- **WhatsApp**: CATE = `{row['Uplift_WhatsApp']*100:+.2f}%` | Retorno Bruto: `S/ {(row['Uplift_WhatsApp']*debt):+.2f}`")
+            st.write(f"- **SMS**: CATE = `{row['Uplift_SMS']*100:+.2f}%` | Retorno Bruto: `S/ {(row['Uplift_SMS']*debt):+.2f}`")
+            st.write(f"- **Llamada**: CATE = `{row['Uplift_Llamada']*100:+.2f}%` | Retorno Bruto: `S/ {(row['Uplift_Llamada']*debt):+.2f}`")
+            st.write(f"- **Campo (Visita)**: CATE = `{row['Uplift_Campo']*100:+.2f}%` | Retorno Bruto: `S/ {(row['Uplift_Campo']*debt):+.2f}`")
+            
+            # Cálculo detallado paso a paso para el canal óptimo
+            canal_col_map = {
+                'WhatsApp': 'Uplift_WhatsApp',
+                'SMS': 'Uplift_SMS',
+                'Llamada': 'Uplift_Llamada',
+                'Campo': 'Uplift_Campo'
+            }
+            col_name = canal_col_map.get(canal)
+            if col_name and col_name in row:
+                tau_val = row[col_name]
+                retorno_bruto = tau_val * debt
+                calculo_vne = retorno_bruto - cost
+                
+                st.markdown("---")
+                st.markdown(f"### ⚙️ Cálculo Detallado del Canal Óptimo ({canal})")
+                st.latex(rf"\text{{VNE}} = ({tau_val:+.4f} \times S/ {debt:,.2f}) - S/ {cost:,.2f}")
+                st.latex(rf"\text{{VNE}} = S/ {retorno_bruto:,.2f} - S/ {cost:,.2f} = S/ {calculo_vne:,.2f}")
+                st.markdown(f"""
+                - **Uplift Causal ($\tau$):** `{tau_val*100:+.2f}%`
+                - **Ingreso Causal Incremental Esperado (Retorno Bruto):** `S/ {retorno_bruto:,.2f}`
+                - **Costo Operativo del Canal:** `S/ {cost:,.2f}`
+                - **Valor Neto Esperado (VNE) Final:** `S/ {calculo_vne:,.2f}`
+                """)
+
+# ---------------------------------------------------------------------------
+# 5. LÓGICA Y CONTENIDO POR PANTALLA
 # ---------------------------------------------------------------------------
 
 if df_scheduled is None:
@@ -287,7 +412,13 @@ if df_scheduled is None:
 # PÁGINA 1: 🏠 DASHBOARD EJECUTIVO
 # ---------------------------------------------------------------------------
 if current_page == "🏠 Dashboard Ejecutivo":
-    st.markdown("<h2 style='margin-bottom: 20px;'>🏠 Dashboard Ejecutivo de Cobranzas</h2>", unsafe_allow_html=True)
+    # Cabecera institucional con gradiente
+    st.markdown("""
+    <div class="mibanco-header">
+        <h1>🟢 Motor de Decisiones NBA - Mibanco</h1>
+        <p>Cobranza Inteligente: Optimización Causal del Canal y Momento de Contacto de Cartera</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     # 1. Grid superior de 5 tarjetas KPI
     kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
@@ -303,7 +434,7 @@ if current_page == "🏠 Dashboard Ejecutivo":
         <div class="kpi-container">
             <div class="kpi-header">Clientes en Mora</div>
             <div class="kpi-val">{total_clientes:,}</div>
-            <div class="kpi-subtext" style="color: #4CAF50;">Mora 1-30 días</div>
+            <div class="kpi-subtext" style="color: #1B8C3E;">Mora 1-30 días</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -312,7 +443,7 @@ if current_page == "🏠 Dashboard Ejecutivo":
         <div class="kpi-container">
             <div class="kpi-header">Deuda Expuesta</div>
             <div class="kpi-val">S/ {deuda_total/1e6:.2f}M</div>
-            <div class="kpi-subtext" style="color: #A0AEC0;">S/ {deuda_total:,.2f}</div>
+            <div class="kpi-subtext" style="color: #7A9088;">S/ {deuda_total:,.2f}</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -321,7 +452,7 @@ if current_page == "🏠 Dashboard Ejecutivo":
         <div class="kpi-container">
             <div class="kpi-header">Costo Campaña</div>
             <div class="kpi-val">S/ {costo_total:,.2f}</div>
-            <div class="kpi-subtext" style="color: #FC8181;">Presupuesto: S/ 5,000</div>
+            <div class="kpi-subtext" style="color: #C53030;">Presupuesto: S/ 5,000</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -329,8 +460,8 @@ if current_page == "🏠 Dashboard Ejecutivo":
         st.markdown(f"""
         <div class="kpi-container">
             <div class="kpi-header">Retorno Neto (VNE)</div>
-            <div class="kpi-val" style="color: #4CAF50;">S/ {vne_total/1e6:.2f}M</div>
-            <div class="kpi-subtext" style="color: #4CAF50;">S/ {vne_total:,.2f}</div>
+            <div class="kpi-val" style="color: #1B8C3E;">S/ {vne_total/1e6:.2f}M</div>
+            <div class="kpi-subtext" style="color: #1B8C3E;">S/ {vne_total:,.2f}</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -339,128 +470,106 @@ if current_page == "🏠 Dashboard Ejecutivo":
         <div class="kpi-container">
             <div class="kpi-header">ROI Campaña</div>
             <div class="kpi-val">{roi_multiplicador:.1f}x</div>
-            <div class="kpi-subtext" style="color: #4CAF50;">Valor / Costo Operativo</div>
+            <div class="kpi-subtext" style="color: #1B8C3E;">Valor / Costo Operativo</div>
         </div>
         """, unsafe_allow_html=True)
 
-    # 2. Fila de Gráficos (Matplotlib estilizados para tema oscuro)
-    st.markdown("<h3 style='margin-top: 15px; margin-bottom: 15px; color:#A0AEC0;'>📊 Distribución Óptima de la Campaña</h3>", unsafe_allow_html=True)
+    # 2. Fila de Gráficos (Heatmap de Plotly + Horizontal Bar Chart Plotly)
+    st.markdown("<h3 style='margin-top: 15px; margin-bottom: 15px; color:#1A3A2A;'>📊 Distribución Óptima de la Campaña</h3>", unsafe_allow_html=True)
     g_col1, g_col2 = st.columns(2)
     
     with g_col1:
-        # Gráfico de Canales Asignados
-        counts = df_scheduled['Canal_Asignado'].value_counts()
-        colors_dict = {
-            'WhatsApp': '#2E7D32',
-            'SMS': '#10B981',
+        # Gráfico A: Clientes Asignados por Canal Causal con Plotly (Homogeneizado)
+        counts = df_scheduled['Canal_Asignado'].value_counts().reset_index()
+        counts.columns = ['Canal', 'Clientes']
+        
+        colors_map = {
+            'WhatsApp': '#1B8C3E',
+            'SMS': '#4FC97A',
             'Llamada': '#2A5C91',
-            'Control': '#718096',
+            'Control': '#7A9088',
             'Campo': '#D97706'
         }
-        plot_colors = [colors_dict.get(c, '#718096') for c in counts.index]
         
-        fig, ax = plt.subplots(figsize=(6, 3.5))
-        fig.patch.set_facecolor('#1A2332')
-        ax.set_facecolor('#1A2332')
+        fig_bar = px.bar(
+            counts,
+            x='Clientes',
+            y='Canal',
+            orientation='h',
+            color='Canal',
+            color_discrete_map=colors_map,
+            text_auto=True
+        )
         
-        bars = ax.barh(counts.index, counts.values, color=plot_colors, height=0.6)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['left'].set_color('#2D3748')
-        ax.spines['bottom'].set_color('#2D3748')
-        ax.tick_params(colors='#A0AEC0', labelsize=10)
-        ax.xaxis.grid(True, linestyle='--', alpha=0.1, color='#FFFFFF')
-        ax.set_axisbelow(True)
+        fig_bar.update_layout(
+            title=dict(
+                text="Clientes Asignados por Canal Causal (NBA)",
+                font=dict(size=14, color="#1A3A2A", family="Outfit", weight="bold")
+            ),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(family="Outfit, sans-serif", size=12, color="#1A3A2A"),
+            margin=dict(l=20, r=20, t=50, b=20),
+            xaxis=dict(showgrid=True, gridcolor="#E5F3EB", showline=True, linecolor="#D5E8DC", tickcolor="#D5E8DC"),
+            yaxis=dict(showgrid=False, showline=True, linecolor="#D5E8DC", tickcolor="#D5E8DC", categoryorder="total ascending"),
+            showlegend=False
+        )
         
-        for bar in bars:
-            width = bar.get_width()
-            ax.text(width + (counts.max() * 0.02),
-                    bar.get_y() + bar.get_height()/2,
-                    f'{int(width):,}',
-                    va='center', ha='left', color='#FFFFFF', fontsize=9, fontweight='bold')
-        
-        ax.set_title("Clientes Asignados por Canal Causal (NBA)", color='#ffffff', fontsize=11, fontweight='bold', pad=10)
-        plt.tight_layout()
-        st.pyplot(fig)
+        st.plotly_chart(fig_bar, use_container_width=True)
         
     with g_col2:
-        # Gráfico por Día de la Semana
+        # Gráfico B: Heatmap de Agenda usando Plotly
+        df_ag = df_scheduled[df_scheduled['Estado_Agenda'] == 'AGENDADO']
         day_order = ['Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sabado']
-        df_agendados = df_scheduled[df_scheduled['Estado_Agenda'] == 'AGENDADO']
-        day_counts = df_agendados['Dia_Semana'].value_counts().reindex(day_order).fillna(0)
         
-        fig, ax = plt.subplots(figsize=(6, 3.5))
-        fig.patch.set_facecolor('#1A2332')
-        ax.set_facecolor('#1A2332')
+        # Agrupar por Canal y Día
+        df_counts = df_ag.groupby(['Canal_Asignado', 'Dia_Semana']).size().reset_index(name='Contactos')
         
-        bars = ax.bar(day_counts.index, day_counts.values, color='#2E7D32', width=0.5, edgecolor='#4CAF50')
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['left'].set_color('#2D3748')
-        ax.spines['bottom'].set_color('#2D3748')
-        ax.tick_params(colors='#A0AEC0', labelsize=10)
-        ax.yaxis.grid(True, linestyle='--', alpha=0.1, color='#FFFFFF')
-        ax.set_axisbelow(True)
+        # Pipotear
+        pivot_df = df_counts.pivot(index='Canal_Asignado', columns='Dia_Semana', values='Contactos').fillna(0)
         
-        for bar in bars:
-            height = bar.get_height()
-            if height > 0:
-                ax.text(bar.get_x() + bar.get_width()/2, height + (day_counts.max() * 0.02),
-                        f'{int(height):,}',
-                        va='bottom', ha='center', color='#FFFFFF', fontsize=9, fontweight='bold')
-                        
-        ax.set_title("Agenda de Contactos Agendados por Día", color='#ffffff', fontsize=11, fontweight='bold', pad=10)
-        plt.tight_layout()
-        st.pyplot(fig)
-
-    # 3. Fila inferior de Alertas con estilo oscuro CobraIQ
-    st.markdown("<h3 style='margin-top: 15px; margin-bottom: 10px; color:#A0AEC0;'>🔔 Alertas y Notificaciones de Operación</h3>", unsafe_allow_html=True)
-    
-    # Función para renderizar alertas
-    def render_custom_alert(alert_type, title, text):
-        if alert_type == "red":
-            bg, border, txt_color = "#2D1A1A", "#FC8181", "#FC8181"
-        elif alert_type == "yellow":
-            bg, border, txt_color = "#2D2510", "#FDD835", "#FDD835"
-        else: # green
-            bg, border, txt_color = "#162B1D", "#4CAF50", "#4CAF50"
-            
-        st.markdown(f"""
-        <div style="background-color: {bg}; border: 1px solid {border}; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; flex-direction: column;">
-            <div style="font-weight: 700; font-size: 14px; color: {txt_color}; margin-bottom: 4px;">{title}</div>
-            <div style="font-size: 13px; color: #E2E8F0;">{text}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # EDITAR
-    render_custom_alert(
-        "red", 
-        "🔴 Capacidad Crítica en Visitas de Campo", 
-        "Se alcanzó la capacidad operativa límite de gestores de campo en las regiones Lima y Sur para el Lunes. Se aplicó priorización del optimizador asignando visitas solo a los 230 clientes con mayor probabilidad de respuesta incremental (VNE)."
-    )
-    
-    # EDITAR
-    render_custom_alert(
-        "yellow", 
-        "🟡 Monitoreo de Cartera - Periodo de Inferencia Activo", 
-        "Scoring en ejecución sobre la cartera del periodo '2026-03'. Se filtró el universo a clientes con mora temprana (1 a 30 días). Los clientes con mora superior (>30 días) fueron derivados al call center de cobranza pesada."
-    )
-    
-    # EDITAR
-    render_custom_alert(
-        "green", 
-        "🟢 Optimización Operativa Exitosa", 
-        f"Algoritmo MILP resuelto exitosamente. Asignación de canales completada. Presupuesto diario asignado (S/ 5,000) utilizado en un 99.99% (S/ {costo_total:,.2f}), maximizando el retorno incremental de la cartera."
-    )
+        # Reordenar ejes
+        available_days = [d for d in day_order if d in pivot_df.columns]
+        pivot_df = pivot_df[available_days]
+        
+        channels_order = ['WhatsApp', 'SMS', 'Llamada', 'Campo']
+        available_channels = [c for c in channels_order if c in pivot_df.index]
+        pivot_df = pivot_df.reindex(available_channels, fill_value=0)
+        
+        # Crear Heatmap de Plotly
+        fig_heat = px.imshow(
+            pivot_df.values,
+            x=pivot_df.columns,
+            y=pivot_df.index,
+            color_continuous_scale="Greens",
+            aspect="auto",
+            labels=dict(x="Día de la Semana", y="Canal de Contacto", color="Volumen"),
+            text_auto=True
+        )
+        
+        fig_heat.update_layout(
+            title=dict(
+                text="Mapa de Calor de Agenda de Contactabilidad",
+                font=dict(size=14, color="#1A3A2A", family="Outfit", weight="bold")
+            ),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(family="Outfit, sans-serif", size=12, color="#1A3A2A"),
+            margin=dict(l=20, r=20, t=50, b=20),
+            xaxis=dict(showgrid=False, tickcolor="#D5E8DC"),
+            yaxis=dict(showgrid=False, tickcolor="#D5E8DC")
+        )
+        
+        st.plotly_chart(fig_heat, use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # PÁGINA 2: 👥 GESTIÓN DE CARTERA
 # ---------------------------------------------------------------------------
 elif current_page == "👥 Gestión de Cartera":
-    st.markdown("<h2 style='margin-bottom: 20px;'>👥 Gestión y Planificación de Cartera</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='margin-bottom: 20px; color: #1A3A2A;'>👥 Gestión y Planificación de Cartera</h2>", unsafe_allow_html=True)
     
     # Barra de filtros superior
-    st.markdown("<div style='background-color: #1A2332; padding: 15px; border-radius: 8px; border: 1px solid #2D3748; margin-bottom: 20px;'>", unsafe_allow_html=True)
+    st.markdown("<div style='background-color: #ffffff; padding: 15px; border-radius: 12px; border: 1.5px solid #D5E8DC; margin-bottom: 20px;'>", unsafe_allow_html=True)
     f_col1, f_col2, f_col3, f_col4 = st.columns(4)
     
     with f_col1:
@@ -513,7 +622,7 @@ elif current_page == "👥 Gestión de Cartera":
     df_table['Costo_Incurrido'] = df_table['Costo_Incurrido'].round(2)
     df_table['Valor_Esperado_Neto'] = df_table['Valor_Esperado_Neto'].round(2)
     
-    # Mostrar tabla interactiva nativa de Streamlit (estilizada por el theme oscuro)
+    # Mostrar tabla interactiva nativa de Streamlit (estilizada por el theme claro)
     st.dataframe(df_table, use_container_width=True, height=450)
     
     # Botón al final para descargar CSV
@@ -530,7 +639,7 @@ elif current_page == "👥 Gestión de Cartera":
 # PÁGINA 3: 🔍 FICHA DEL CLIENTE
 # ---------------------------------------------------------------------------
 elif current_page == "🔍 Ficha del Cliente":
-    st.markdown("<h2 style='margin-bottom: 20px;'>🔍 Consulta Individual del Cliente</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='margin-bottom: 20px; color: #1A3A2A;'>🔍 Consulta Individual del Cliente</h2>", unsafe_allow_html=True)
     
     # Buscador de cliente por texto
     client_id_str = st.text_input("Ingrese ID del Cliente a Consultar", value="44123")
@@ -573,16 +682,16 @@ elif current_page == "🔍 Ficha del Cliente":
             
             # Iniciales para el avatar
             avatar_initial = "👤" if genero_str == "N/A" else ("👨" if genero_str == "M" else "👩")
-            avatar_bg = "#2A5C91" if genero_str == "M" else "#2E7D32"
+            avatar_bg = "#E5F3EB"
             
             st.markdown(f"""
-            <div style="background-color: #1A2332; border: 1px solid #2D3748; border-radius: 10px; padding: 20px; display: flex; align-items: center; gap: 20px; margin-bottom: 20px;">
-                <div style="background-color: {avatar_bg}; border-radius: 50%; width: 70px; height: 70px; display: flex; align-items: center; justify-content: center; font-size: 36px; box-shadow: 0 4px 6px rgba(0,0,0,0.15);">
+            <div style="background-color: #ffffff; border: 1.5px solid #D5E8DC; border-radius: 12px; padding: 20px; display: flex; align-items: center; gap: 20px; margin-bottom: 20px;">
+                <div style="background-color: {avatar_bg}; border-radius: 50%; width: 70px; height: 70px; display: flex; align-items: center; justify-content: center; font-size: 36px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border: 1.5px solid #D5E8DC;">
                     {avatar_initial}
                 </div>
                 <div>
-                    <h3 style="margin: 0; color: #ffffff;">Cliente ID: {client_id}</h3>
-                    <div style="display: flex; gap: 15px; margin-top: 5px; font-size: 14px; color: #A0AEC0;">
+                    <h3 style="margin: 0; color: #1A3A2A;">Cliente ID: {client_id}</h3>
+                    <div style="display: flex; gap: 15px; margin-top: 5px; font-size: 14px; color: #7A9088;">
                         <span><strong>Región:</strong> {region_str}</span>
                         <span>•</span>
                         <span><strong>Zona:</strong> {zona_str}</span>
@@ -599,14 +708,14 @@ elif current_page == "🔍 Ficha del Cliente":
             
             # Columna izquierda: Información del cliente y financiera
             with col_info1:
-                st.markdown("<h4 style='color: #A0AEC0; margin-bottom: 10px;'>📋 Perfil Financiero e Historial</h4>", unsafe_allow_html=True)
+                st.markdown("<h4 style='color: #1A3A2A; margin-bottom: 10px;'>📋 Perfil Financiero e Historial</h4>", unsafe_allow_html=True)
                 
                 # Fila llave-valor limpia
                 def render_row(label, val, highlight=False):
-                    color = "#4CAF50" if highlight else "#ffffff"
+                    color = "#1B8C3E" if highlight else "#1A3A2A"
                     st.markdown(f"""
-                    <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #2D3748; padding: 8px 0;">
-                        <span style="color: #A0AEC0; font-size: 14px;">{label}</span>
+                    <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #D5E8DC; padding: 8px 0;">
+                        <span style="color: #7A9088; font-size: 14px;">{label}</span>
                         <span style="color: {color}; font-size: 14px; font-weight: 600;">{val}</span>
                     </div>
                     """, unsafe_allow_html=True)
@@ -624,7 +733,7 @@ elif current_page == "🔍 Ficha del Cliente":
                 render_row("Deuda Vencida (Cuota Mensual)", f"S/ {c_assign_row['Deuda_Expuesta']:,.2f}", highlight=True)
                 render_row("Score de Riesgo Mibanco", f"{score_riesgo} / 1000")
                 render_row("Probabilidad de Default", f"{prob_def:.2f}%")
-                render_row("Número de Aatrasos Previos", f"{atrasos_prev} veces")
+                render_row("Número de Atrasos Previos", f"{atrasos_prev} veces")
                 render_row("Días de Mora Promedio Histórico", f"{mora_prom:.1f} días")
                 render_row("Ratio de Pago Realizado", f"{ratio_pago:.1f}%")
                 render_row("Días desde el Último Pago", f"{ultimo_pago} días")
@@ -633,7 +742,7 @@ elif current_page == "🔍 Ficha del Cliente":
                 
             # Columna derecha: Decisión y CATE Scores
             with col_info2:
-                st.markdown("<h4 style='color: #A0AEC0; margin-bottom: 10px;'>💡 Decisión del Orquestador NBA</h4>", unsafe_allow_html=True)
+                st.markdown("<h4 style='color: #1A3A2A; margin-bottom: 10px;'>💡 Decisión del Orquestador NBA</h4>", unsafe_allow_html=True)
                 
                 canal_nba = c_assign_row['Canal_Asignado']
                 vne_cli = c_assign_row['Valor_Esperado_Neto']
@@ -641,58 +750,66 @@ elif current_page == "🔍 Ficha del Cliente":
                 estado_ag = c_assign_row['Estado_Agenda']
                 
                 # Mapeo de colores del canal
-                color_canal = "#4CAF50" if canal_nba == "WhatsApp" else ("#10B981" if canal_nba == "SMS" else ("#3B82F6" if canal_nba == "Llamada" else ("#F59E0B" if canal_nba == "Campo" else "#718096")))
+                color_canal = "#1B8C3E" if canal_nba == "WhatsApp" else ("#4FC97A" if canal_nba == "SMS" else ("#2A5C91" if canal_nba == "Llamada" else ("#D97706" if canal_nba == "Campo" else "#7A9088")))
                 
                 st.markdown(f"""
-                <div style="background-color: #161D2B; border: 1px solid #2D3748; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+                <div style="background-color: #ffffff; border: 1.5px solid #D5E8DC; border-radius: 12px; padding: 15px; margin-bottom: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <span style="font-size: 14px; color: #A0AEC0; font-weight: 500;">Canal Seleccionado (NBA):</span>
+                        <span style="font-size: 14px; color: #7A9088; font-weight: 500;">Canal Seleccionado (NBA):</span>
                         <span style="background-color: {color_canal}; color: #ffffff; padding: 4px 10px; border-radius: 4px; font-size: 13px; font-weight: 700;">{canal_nba.upper()}</span>
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 14px;">
-                        <span style="color: #A0AEC0;">Valor Neto Esperado (VNE):</span>
-                        <span style="color: #4CAF50; font-weight: 600;">S/ {vne_cli:,.2f}</span>
+                        <span style="color: #7A9088;">Valor Neto Esperado (VNE):</span>
+                        <span style="color: #1B8C3E; font-weight: 600;">S/ {vne_cli:,.2f}</span>
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 14px;">
-                        <span style="color: #A0AEC0;">Costo del Canal:</span>
-                        <span style="color: #ffffff;">S/ {costo_cli:,.2f}</span>
+                        <span style="color: #7A9088;">Costo del Canal:</span>
+                        <span style="color: #1A3A2A;">S/ {costo_cli:,.2f}</span>
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 14px;">
-                        <span style="color: #A0AEC0;">Día / Hora Asignado:</span>
-                        <span style="color: #ffffff; font-weight: 600;">{c_assign_row['Dia_Semana']} ({c_assign_row['Hora_Inicio']}-{c_assign_row['Hora_Fin']})</span>
+                        <span style="color: #7A9088;">Día / Hora Asignado:</span>
+                        <span style="color: #1A3A2A; font-weight: 600;">{c_assign_row['Dia_Semana']} ({c_assign_row['Hora_Inicio']}-{c_assign_row['Hora_Fin']})</span>
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 14px;">
-                        <span style="color: #A0AEC0;">Asesor Encargado:</span>
-                        <span style="color: #ffffff;">{c_assign_row['Asesor_Asignado']}</span>
+                        <span style="color: #7A9088;">Asesor Encargado:</span>
+                        <span style="color: #1A3A2A;">{c_assign_row['Asesor_Asignado']}</span>
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 14px;">
-                        <span style="color: #A0AEC0;">Estado Agenda:</span>
+                        <span style="color: #7A9088;">Estado Agenda:</span>
                         <span style="color: {color_canal}; font-weight: 600;">{estado_ag}</span>
                     </div>
-                    <div style="display: flex; justify-content: space-between; font-size: 14px; border-top: 1px solid #2D3748; padding-top: 8px; margin-top: 5px;">
-                        <span style="color: #A0AEC0;">Restricción Aplicada:</span>
-                        <span style="color: #A0AEC0; font-style: italic; font-size: 12px;">{c_assign_row['Restriccion_Aplicada']}</span>
+                    <div style="display: flex; justify-content: space-between; font-size: 14px; border-top: 1px solid #D5E8DC; padding-top: 8px; margin-top: 5px;">
+                        <span style="color: #7A9088;">Restricción Aplicada:</span>
+                        <span style="color: #7A9088; font-style: italic; font-size: 12px;">{c_assign_row['Restriccion_Aplicada']}</span>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
                 
+                # Botón de ver desglose matemático en Pop-up
+                if st.button("🔍 Ver Detalle de Cálculos Matemáticos", use_container_width=True):
+                    show_math_details(client_id, c_assign_row['Deuda_Expuesta'], canal_nba, costo_cli, vne_cli)
+                
+                st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+                
                 # Visualización de Uplift CATE Individual
-                st.markdown("<h4 style='color: #A0AEC0; margin-top: 10px; margin-bottom: 10px;'>📊 Probabilidad de Respuesta Incremental (CATE)</h4>", unsafe_allow_html=True)
+                st.markdown("<h4 style='color: #1A3A2A; margin-top: 10px; margin-bottom: 10px;'>📊 Probabilidad de Respuesta Incremental (CATE)</h4>", unsafe_allow_html=True)
                 
                 if c_uplifts is not None:
-                    # Mostrar progress bar para cada canal
+                    # Mostrar progress bar proporcional para cada canal
                     def render_uplift_bar(canal, value):
                         pct = value * 100
-                        # Mapear valor para la visualización del color (positivo verde, negativo rojo)
-                        bar_color = "#4CAF50" if pct > 0 else "#FC8181"
+                        bar_color = "#1B8C3E" if pct > 0 else "#FC8181"
+                        # Modificación CATE proporcional estricta
+                        width_pct = min(max(pct, 0.0), 100.0)
+                        
                         st.markdown(f"""
                         <div style="margin-bottom: 10px;">
                             <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 3px;">
-                                <span style="color: #ffffff; font-weight: 500;">{canal}</span>
+                                <span style="color: #1A3A2A; font-weight: 500;">{canal}</span>
                                 <span style="color: {bar_color}; font-weight: 600;">{pct:+.2f}%</span>
                             </div>
-                            <div style="background-color: #2D3748; border-radius: 4px; height: 8px; width: 100%; overflow: hidden;">
-                                <div style="background-color: {bar_color}; width: {min(max(abs(pct)*5, 0), 100)}%; height: 100%;"></div>
+                            <div style="background-color: #E5F3EB; border-radius: 4px; height: 8px; width: 100%; overflow: hidden;">
+                                <div style="background-color: {bar_color}; width: {width_pct}%; height: 100%;"></div>
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
@@ -708,12 +825,11 @@ elif current_page == "🔍 Ficha del Cliente":
 # PÁGINA 4: 📊 ANÁLISIS E INSIGHTS
 # ---------------------------------------------------------------------------
 elif current_page == "📊 Análisis e Insights":
-    st.markdown("<h2 style='margin-bottom: 20px;'>📊 Análisis e Insights de Propensión Causal</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='margin-bottom: 20px; color: #1A3A2A;'>📊 Análisis e Insights de Propensión Causal</h2>", unsafe_allow_html=True)
     
     # Grid de KPIs avanzados del optimizador
     k_col1, k_col2, k_col3 = st.columns(3)
     
-    # Valores extraídos directamente de los logs de la consola del script de optimización
     vne_azar = 327745.08
     vne_opt = df_scheduled['Valor_Esperado_Neto'].sum()
     valor_agregado = vne_opt - vne_azar
@@ -723,7 +839,7 @@ elif current_page == "📊 Análisis e Insights":
         st.markdown(f"""
         <div class="kpi-container">
             <div class="kpi-header">Retorno Tradicional (Random)</div>
-            <div class="kpi-val" style="color: #A0AEC0;">S/ {vne_azar:,.2f}</div>
+            <div class="kpi-val" style="color: #7A9088;">S/ {vne_azar:,.2f}</div>
             <div class="kpi-subtext">Asignación sin optimizador causal</div>
         </div>
         """, unsafe_allow_html=True)
@@ -732,93 +848,164 @@ elif current_page == "📊 Análisis e Insights":
         st.markdown(f"""
         <div class="kpi-container">
             <div class="kpi-header">Retorno CobraIQ (IA Causal)</div>
-            <div class="kpi-val" style="color: #4CAF50;">S/ {vne_opt:,.2f}</div>
+            <div class="kpi-val" style="color: #1B8C3E;">S/ {vne_opt:,.2f}</div>
             <div class="kpi-subtext">Modelo Uplift + Mochila MILP</div>
         </div>
         """, unsafe_allow_html=True)
         
     with k_col3:
         st.markdown(f"""
-        <div class="kpi-container" style="border-color: #4CAF50;">
-            <div class="kpi-header" style="color: #4CAF50;">Valor Neto Agregado (IA)</div>
-            <div class="kpi-val" style="color: #4CAF50;">S/ {valor_agregado:,.2f}</div>
-            <div class="kpi-subtext" style="color: #4CAF50;">Incremento de +{pct_agregado:.1f}%</div>
+        <div class="kpi-container" style="border-color: #1B8C3E !important;">
+            <div class="kpi-header" style="color: #1B8C3E;">Valor Neto Agregado (IA)</div>
+            <div class="kpi-val" style="color: #1B8C3E;">S/ {valor_agregado:,.2f}</div>
+            <div class="kpi-subtext" style="color: #1B8C3E;">Incremento de +{pct_agregado:.1f}%</div>
         </div>
         """, unsafe_allow_html=True)
         
-    st.markdown("<hr style='border-color: #2D3748; margin: 15px 0;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='border-color: #D5E8DC; margin: 15px 0;'>", unsafe_allow_html=True)
     
-    # Distribuciones operativas adicionales
-    i_col1, i_col2 = st.columns(2)
+    # PESTAÑA INSIGHTS - GRÁFICOS
+    st.markdown("### 📈 Curva de Optimización de Costos y Saturación")
     
-    with i_col1:
-        # Monto VNE total por región
-        region_vne = df_scheduled.groupby('Region')['Valor_Esperado_Neto'].sum().sort_values(ascending=False)
-        fig, ax = plt.subplots(figsize=(6, 3.5))
-        fig.patch.set_facecolor('#1A2332')
-        ax.set_facecolor('#1A2332')
+    # Calcular y graficar la Curva de Costo vs. Efectividad Acumulada
+    def get_cost_effectiveness_data(df):
+        # Ordenar por VNE descendente
+        df_sorted = df.sort_values(by='Valor_Esperado_Neto', ascending=False).reset_index(drop=True)
+        df_sorted['Costo_Acumulado'] = df_sorted['Costo_Incurrido'].cumsum()
         
-        bars = ax.bar(region_vne.index, region_vne.values, color='#2A5C91', width=0.45, edgecolor='#3B82F6')
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['left'].set_color('#2D3748')
-        ax.spines['bottom'].set_color('#2D3748')
-        ax.tick_params(colors='#A0AEC0', labelsize=10)
-        ax.yaxis.grid(True, linestyle='--', alpha=0.1, color='#FFFFFF')
-        ax.set_axisbelow(True)
+        # Efecto de pago incremental
+        df_sorted['Efecto_Pago_Incremental'] = df_sorted['Valor_Esperado_Neto'] + df_sorted['Costo_Incurrido']
+        df_sorted['Efectividad_Acumulada'] = df_sorted['Efecto_Pago_Incremental'].cumsum()
         
-        for bar in bars:
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2, height + (region_vne.max() * 0.02),
-                    f'S/ {height/1e3:.1f}k',
-                    va='bottom', ha='center', color='#FFFFFF', fontsize=9, fontweight='bold')
-                    
-        ax.set_title("Valor Neto Esperado (VNE) por Región", color='#ffffff', fontsize=11, fontweight='bold', pad=10)
-        plt.tight_layout()
-        st.pyplot(fig)
+        # Normalizar a porcentajes
+        total_cost = df_sorted['Costo_Incurrido'].sum()
+        total_efectividad = df_sorted['Efecto_Pago_Incremental'].sum()
         
-    with i_col2:
-        # Relación de Deuda Promedio por Canal Asignado
-        deuda_canal = df_scheduled.groupby('Canal_Asignado')['Deuda_Expuesta'].mean().sort_values(ascending=False)
+        df_sorted['Costo_Acumulado_Pct'] = (df_sorted['Costo_Acumulado'] / total_cost) * 100
+        df_sorted['Efectividad_Acumulada_Pct'] = (df_sorted['Efectividad_Acumulada'] / total_efectividad) * 100
         
-        fig, ax = plt.subplots(figsize=(6, 3.5))
-        fig.patch.set_facecolor('#1A2332')
-        ax.set_facecolor('#1A2332')
-        
-        # Colores por canal
-        colors_dict = {
-            'WhatsApp': '#2E7D32',
-            'SMS': '#10B981',
-            'Llamada': '#2A5C91',
-            'Control': '#718096',
-            'Campo': '#D97706'
-        }
-        plot_colors = [colors_dict.get(c, '#718096') for c in deuda_canal.index]
-        
-        bars = ax.bar(deuda_canal.index, deuda_canal.values, color=plot_colors, width=0.45)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['left'].set_color('#2D3748')
-        ax.spines['bottom'].set_color('#2D3748')
-        ax.tick_params(colors='#A0AEC0', labelsize=10)
-        ax.yaxis.grid(True, linestyle='--', alpha=0.1, color='#FFFFFF')
-        ax.set_axisbelow(True)
-        
-        for bar in bars:
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2, height + (deuda_canal.max() * 0.02),
-                    f'S/ {int(height):,}',
-                    va='bottom', ha='center', color='#FFFFFF', fontsize=9, fontweight='bold')
-                    
-        ax.set_title("Deuda Promedio de Clientes Asignados por Canal", color='#ffffff', fontsize=11, fontweight='bold', pad=10)
-        plt.tight_layout()
-        st.pyplot(fig)
+        return df_sorted
 
-    st.markdown("""
-    <div style="background-color: #1A2332; border: 1px solid #2D3748; border-radius: 8px; padding: 20px; margin-top: 15px;">
-        <h4 style="color: #ffffff; margin-top: 0; margin-bottom: 8px;">💡 Explicación del Logro Causal</h4>
-        <p style="font-size: 14px; color: #A0AEC0; line-height: 1.5; margin: 0;">
-            El optimizador matemático CobraIQ asigna a cada cliente al canal más rentable que genera el mayor impacto de pago neto. Como se observa en la distribución de deuda promedio, el modelo asigna de forma inteligente los canales costosos como <strong>Campo</strong> (costo S/ 8.00) únicamente a clientes con deudas muy elevadas (promedio S/ 1,299) y con altos coeficientes CATE (uplift causal). De la misma manera, la inteligencia artificial clasifica en <strong>Control</strong> a clientes que de todas formas pagarán sin requerir contacto alguno, ahorrando costos de envío innecesarios.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+    df_curve = get_cost_effectiveness_data(df_scheduled)
+    
+    # Punto óptimo aproximado (90% de costo)
+    idx_90 = (df_curve['Costo_Acumulado_Pct'] - 90).abs().idxmin()
+    cost_at_90 = df_curve.loc[idx_90, 'Costo_Acumulado_Pct']
+    efect_at_90 = df_curve.loc[idx_90, 'Efectividad_Acumulada_Pct']
+    
+    # Construir gráfico interactivo Plotly de la curva Costo vs Efectividad
+    fig_curve = go.Figure()
+    
+    # Curva CobraIQ
+    fig_curve.add_trace(go.Scatter(
+        x=df_curve['Costo_Acumulado_Pct'],
+        y=df_curve['Efectividad_Acumulada_Pct'],
+        mode='lines',
+        name='Optimización Causal (CobraIQ)',
+        line=dict(color='#1B8C3E', width=3.5),
+        hovertemplate='Costo Acumulado: %{x:.1f}%<br>Efectividad: %{y:.1f}%<extra></extra>'
+    ))
+    
+    # Línea diagonal baseline
+    fig_curve.add_trace(go.Scatter(
+        x=[0, 100],
+        y=[0, 100],
+        mode='lines',
+        name='Estrategia Aleatoria (Baseline)',
+        line=dict(color='#7A9088', width=2, dash='dash'),
+        hovertemplate='Asignación Aleatoria<extra></extra>'
+    ))
+    
+    # Punto de corte óptimo
+    fig_curve.add_trace(go.Scatter(
+        x=[cost_at_90],
+        y=[efect_at_90],
+        mode='markers+text',
+        name='Corte Óptimo (-10% Costo)',
+        text=[f"Corte Óptimo<br>Costo: {cost_at_90:.1f}%<br>Efecto: {efect_at_90:.1f}%"],
+        textposition="bottom right",
+        marker=dict(size=12, color='#D97706', symbol='star'),
+        hovertemplate='Corte Óptimo: Costo %{x:.1f}%, Efectos %{y:.1f}%<extra></extra>'
+    ))
+    
+    fig_curve.update_layout(
+        title=dict(
+            text="Curva de Costo vs. Efectividad Acumulada de la Cartera",
+            font=dict(size=14, color="#1A3A2A", family="Outfit", weight="bold")
+        ),
+        xaxis=dict(
+            title="Costo Operativo Acumulado (%)",
+            gridcolor="#E5F3EB",
+            showline=True,
+            linecolor="#D5E8DC",
+            tickcolor="#D5E8DC",
+            range=[0, 100]
+        ),
+        yaxis=dict(
+            title="Efectividad Acumulada (%)",
+            gridcolor="#E5F3EB",
+            showline=True,
+            linecolor="#D5E8DC",
+            tickcolor="#D5E8DC",
+            range=[0, 105]
+        ),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(family="Outfit, sans-serif", size=12, color="#1A3A2A"),
+        margin=dict(l=20, r=20, t=50, b=20),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
+    )
+    
+    st.plotly_chart(fig_curve, use_container_width=True)
+
+    # 4. NUEVO GRÁFICO DILÍCITO: Curva de Saturación Causal y Efecto Agobio por Canal
+    df_sat = get_saturation_data()
+    if df_sat is not None:
+        fig_sat = px.line(
+            df_sat,
+            x='intento_num',
+            y='tasa_pago_pct',
+            color='Canal',
+            color_discrete_map={
+                'WhatsApp': '#1B8C3E',
+                'SMS': '#4FC97A',
+                'Llamada': '#2A5C91',
+                'Campo': '#D97706'
+            },
+            markers=True,
+            title="Curva de Saturación Causal y Efecto Agobio (Línea Roja)",
+            labels={
+                'intento_num': 'Número de Intentos de Contacto Semanales', 
+                'tasa_pago_pct': 'Tasa de Pago Observada (%)'
+            }
+        )
+        
+        # Añadir línea roja vertical de saturación/agobio
+        fig_sat.add_vline(
+            x=3,
+            line_width=2.5,
+            line_dash="dash",
+            line_color="#C53030",
+            annotation_text="Línea Roja: Límite de Agobio (Caída en la respuesta)",
+            annotation_position="top left",
+            annotation_font=dict(color="#C53030", size=11, family="Outfit")
+        )
+        
+        fig_sat.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(family="Outfit, sans-serif", size=12, color="#1A3A2A"),
+            margin=dict(l=20, r=20, t=50, b=20),
+            xaxis=dict(showgrid=True, gridcolor="#E5F3EB", showline=True, linecolor="#D5E8DC", tickcolor="#D5E8DC", dtick=1),
+            yaxis=dict(showgrid=True, gridcolor="#E5F3EB", showline=True, linecolor="#D5E8DC", tickcolor="#D5E8DC")
+        )
+        
+        st.plotly_chart(fig_sat, use_container_width=True)
+    else:
+        st.info("No se encontró el archivo de entrenamiento para calcular la curva de saturación.")
