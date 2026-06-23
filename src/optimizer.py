@@ -30,10 +30,10 @@ CHANNELS = ["Control", "WhatsApp", "SMS", "Llamada", "Campo"]
 # Matriz de Costos Unitarios (Soles)
 COSTS = {
     "Control": 0.00,
-    "WhatsApp": 0.10,
-    "SMS": 0.20,
-    "Llamada": 1.50,
-    "Campo": 8.00
+    "WhatsApp": 1,
+    "SMS": 2,
+    "Llamada": 3,
+    "Campo": 4
 }
 
 DAY_NAMES = {
@@ -51,6 +51,7 @@ OPERATING_HOURS = list(range(7, 19))  # slots 07:00-08:00 ... 18:00-19:00
 
 # Distribucion historica de contactabilidad por hora. Se usa para priorizar
 # horarios con mayor probabilidad operativa; no reemplaza al uplift causal.
+
 HOURLY_WEIGHTS = {
     1: {8: 0.064, 9: 0.105, 10: 0.111, 11: 0.110, 12: 0.101, 13: 0.093, 14: 0.089, 15: 0.090, 16: 0.092, 17: 0.084, 18: 0.061},
     2: {8: 0.069, 9: 0.101, 10: 0.110, 11: 0.106, 12: 0.100, 13: 0.090, 14: 0.086, 15: 0.087, 16: 0.096, 17: 0.093, 18: 0.063},
