@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 import streamlit as st
 
-# Ruta al archivo de persistencia de usuarios
-USERS_FILE = Path(__file__).resolve().parent / "data" / "users.json"
+# Ruta al archivo de persistencia de usuarios (modificado para buscar en el mismo directorio)
+USERS_FILE = Path(__file__).resolve().parent / "users.json"
 
 def load_users():
     """Carga la base de datos de usuarios de CobraIQ/MiBanco."""

@@ -23,7 +23,6 @@ import plotly.graph_objects as go
 ROOT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT_DIR))
 import src.config as config
-import auth
 
 # Configuración de página
 st.set_page_config(
@@ -33,12 +32,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ---------------------------------------------------------------------------
-# CONTROL DE AUTENTICACIÓN Y SESIÓN NATIVO
-# ---------------------------------------------------------------------------
-if not st.session_state.get('authenticated', False):
-    auth.render_login()
-    st.stop()
+
 
 # ---------------------------------------------------------------------------
 # 1. CARGA DE DATOS CON CACHÉ
@@ -370,18 +364,7 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
         
-    # Botón de Cerrar Sesión al final del Sidebar
-    st.markdown("<hr style='margin: 15px 0; border-color: #D5E8DC;'>", unsafe_allow_html=True)
-    st.markdown('<div class="sidebar-logout-container">', unsafe_allow_html=True)
-    if st.button("🚪 Cerrar Sesión", key="btn_sidebar_logout"):
-        # Limpiar variables de sesión y redirigir
-        st.session_state.pop('username', None)
-        st.session_state.pop('user_email', None)
-        st.session_state.pop('user_area', None)
-        st.session_state['authenticated'] = False
-        st.session_state['auth_screen'] = 'login'
-        st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
+
 
 # ---------------------------------------------------------------------------
 # DECLARACIÓN DEL DIALOG MODAL (POP-UP MATEMÁTICO)
