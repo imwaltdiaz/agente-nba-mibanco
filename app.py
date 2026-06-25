@@ -296,7 +296,7 @@ with st.sidebar:
         </span>
     </div>
     <div style="font-size: 10px; color: #7A9088; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; margin-top: -2px; margin-left: 2px;">
-        Control de Cobranza Inteligente
+        Sistema CobraIQ · Control de Cobranza Inteligente
     </div>
     """, unsafe_allow_html=True)
     
@@ -436,7 +436,7 @@ if current_page == "🏠 Dashboard Ejecutivo":
     # Cabecera institucional con gradiente
     st.markdown("""
     <div class="mibanco-header">
-        <h1>🟢 Motor de Decisiones NBA - Mibanco</h1>
+        <h1>🟢 Agente Orquestador NBA - Mibanco</h1>
         <p>Cobranza Inteligente: Optimización Causal del Canal y Momento de Contacto de Cartera</p>
     </div>
     """, unsafe_allow_html=True)
