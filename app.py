@@ -76,13 +76,69 @@ def load_cate_scores():
     return pd.read_parquet(path)
 
 
-# (get_saturation_data fue eliminado por limpieza de gráficos antiguos)
+@st.cache_data
+def load_credits_database():
+    """Carga los datos de la tabla de créditos."""
+    path = ROOT_DIR / "data" / "01_raw" / "02_Tabla_de_Crditos.csv"
+    if not path.exists():
+        return None
+    try:
+        return pd.read_csv(path)
+    except Exception:
+        return None
+
+
+@st.cache_data
+def calcular_baseline_aleatorio(df_scores, budget=5000.0):
+    """
+    Simula el Valor Neto Esperado de una estrategia tradicional o aleatoria:
+    Se asigna a los clientes un canal al azar (probabilidad uniforme entre 
+    WhatsApp, SMS, Llamada y Campo) hasta agotar el presupuesto diario.
+    """
+    canales_activos = ["WhatsApp", "SMS", "Llamada", "Campo"]
+    
+    # Costos Unitarios
+    costs = {
+        "Control": 0.00,
+        "WhatsApp": 0.10,
+        "SMS": 0.20,
+        "Llamada": 1.50,
+        "Campo": 8.00
+    }
+    
+    # 1. Costo promedio de elegir un canal a ciegas
+    costo_promedio_azar = sum(costs[c] for c in canales_activos) / len(canales_activos)
+    
+    # 2. ¿A cuántas personas podemos contactar antes de quedarnos sin presupuesto?
+    n_contactos_posibles = budget / costo_promedio_azar
+    
+    # 3. Asumiendo una distribución uniforme (25% del presupuesto a cada canal)
+    contactos_por_canal = n_contactos_posibles / len(canales_activos)
+    
+    deuda_promedio = df_scores['Deuda_Expuesta'].mean()
+    vne_aleatorio_total = 0.0
+    
+    for canal in canales_activos:
+        # Usamos el uplift promedio general porque la asignación es al azar
+        uplift_promedio = df_scores[f'Uplift_{canal}'].mean()
+        
+        # VNE de aplicar este canal a un cliente promedio
+        vne_promedio_canal = (uplift_promedio * deuda_promedio) - costs[canal]
+        
+        # Sumamos el valor generado por la cantidad de personas contactadas
+        vne_aleatorio_total += (vne_promedio_canal * contactos_por_canal)
+        
+    return vne_aleatorio_total
 
 
 # Carga de datasets
 df_scheduled, file_name_loaded = get_latest_data()
 df_clientes = load_client_database()
 df_scores = load_cate_scores()
+df_creditos = load_credits_database()
+
+# Calcular VNE Tradicional (Random) de forma dinámica si df_scores está disponible
+VNE_AZAR_GLOBAL = calcular_baseline_aleatorio(df_scores) if df_scores is not None else 327745.08
 
 # ---------------------------------------------------------------------------
 # 2. DISEÑO Y ESTILIZACIÓN (CSS PERSONALIZADO - IDENTIDAD CLARA MIBANCO)
@@ -335,7 +391,7 @@ with st.sidebar:
         
         # El ahorro estimado es el VNE de la IA menos el VNE del Azar
         vne_opt = df_scheduled['Valor_Esperado_Neto'].sum()
-        vne_azar = 327745.08
+        vne_azar = VNE_AZAR_GLOBAL
         ahorro_estimado = vne_opt - vne_azar
         
         st.markdown(f"""
@@ -500,29 +556,42 @@ if current_page == "🏠 Dashboard Ejecutivo":
     g_col1, g_col2 = st.columns(2)
     
     with g_col1:
-        # Gráfico A: Clientes Asignados por Canal Causal con Plotly (Homogeneizado)
-        counts = df_scheduled['Canal_Asignado'].value_counts().reset_index()
+        # Gráfico A: Clientes Asignados por Canal Causal con Plotly Pie Chart
+        # Cargar el archivo de asignación optimizada específico solicitado
+        processed_dir = ROOT_DIR / "data" / "03_processed"
+        specific_csv_path = processed_dir / "asignacion_optimizada_v2_agenda_20260623_1821.csv"
+        
+        if specific_csv_path.exists():
+            df_pie = pd.read_csv(specific_csv_path)
+        else:
+            df_pie = df_scheduled.copy()
+            
+        df_pie['Canal_Asignado'] = df_pie['Canal_Asignado'].replace('Control', 'Sin contacto')
+        counts = df_pie['Canal_Asignado'].value_counts().reset_index()
         counts.columns = ['Canal', 'Clientes']
         
         colors_map = {
             'WhatsApp': '#1B8C3E',
             'SMS': '#4FC97A',
             'Llamada': '#2A5C91',
-            'Control': '#7A9088',
+            'Sin contacto': '#7A9088',
             'Campo': '#D97706'
         }
         
-        fig_bar = px.bar(
+        fig_pie = px.pie(
             counts,
-            x='Clientes',
-            y='Canal',
-            orientation='h',
+            values='Clientes',
+            names='Canal',
             color='Canal',
-            color_discrete_map=colors_map,
-            text_auto=True
+            color_discrete_map=colors_map
         )
         
-        fig_bar.update_layout(
+        fig_pie.update_traces(
+            textinfo='percent',
+            hovertemplate='<b>Canal:</b> %{label}<br><b>Cantidad:</b> %{value:,}<br><b>Porcentaje:</b> %{percent}<extra></extra>'
+        )
+        
+        fig_pie.update_layout(
             title=dict(
                 text="Clientes Asignados por Canal Causal (NBA)",
                 font=dict(size=14, color="#1A3A2A", family="Outfit", weight="bold")
@@ -531,12 +600,16 @@ if current_page == "🏠 Dashboard Ejecutivo":
             plot_bgcolor='rgba(0,0,0,0)',
             font=dict(family="Outfit, sans-serif", size=12, color="#1A3A2A"),
             margin=dict(l=20, r=20, t=50, b=20),
-            xaxis=dict(showgrid=True, gridcolor="#E5F3EB", showline=True, linecolor="#D5E8DC", tickcolor="#D5E8DC"),
-            yaxis=dict(showgrid=False, showline=True, linecolor="#D5E8DC", tickcolor="#D5E8DC", categoryorder="total ascending"),
-            showlegend=False
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=-0.15,
+                xanchor="center",
+                x=0.5
+            )
         )
         
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(fig_pie, use_container_width=True)
         
     with g_col2:
         # Gráfico B: Heatmap de Agenda usando Plotly
@@ -841,6 +914,115 @@ elif current_page == "🔍 Ficha del Cliente":
                     render_uplift_bar("Campo (Visita Física)", c_uplifts['Uplift_Campo'])
                 else:
                     st.info("Scores CATE individuales no disponibles para este cliente en el archivo parquet.")
+            
+            # 3. Adición: Historial de Pagos Recientes
+            st.markdown("<hr style='border-color: #D5E8DC; margin: 20px 0;'>", unsafe_allow_html=True)
+            st.markdown("<h4 style='color: #1A3A2A; margin-bottom: 15px;'>💳 Historial de Pagos Recientes (Enero - Diciembre 2026)</h4>", unsafe_allow_html=True)
+            
+            if df_creditos is None:
+                st.warning("⚠️ No se pudo cargar la base de datos de créditos.")
+            else:
+                try:
+                    # Buscar historial del cliente
+                    client_credits = df_creditos[df_creditos['cliente_id'] == client_id]
+                    
+                    if client_credits.empty:
+                        # Excepción/caso no encontrado: mostrar advertencia y pintar casillas vacías (gris)
+                        st.warning(f"⚠️ El Cliente ID {client_id} no cuenta con registros en la base de datos de créditos.")
+                        status_list = ['sin_registro'] * 12
+                        details_list = ["Sin registro"] * 12
+                    else:
+                        # Construir la lista de cumplimiento para cada mes
+                        status_list = []
+                        details_list = []
+                        
+                        for m in range(1, 13):
+                            if m <= 3:
+                                period_str = f"2026-{m:02d}"
+                                credits_month = client_credits[client_credits['periodo'] == period_str]
+                                if credits_month.empty:
+                                    status_list.append('sin_registro')
+                                    details_list.append("Sin registro para este mes")
+                                else:
+                                    # Determinar si pagó o estuvo en mora
+                                    has_mora = (credits_month['pago_realizado_mes'] == 0).any() or (credits_month['dias_mora'] > 0).any()
+                                    if has_mora:
+                                        status_list.append('mora')
+                                        max_mora = credits_month['dias_mora'].max()
+                                        details_list.append(f"En mora (Máx: {max_mora} días)")
+                                    else:
+                                        status_list.append('pagó')
+                                        details_list.append("Pago realizado a tiempo")
+                            else:
+                                status_list.append('sin_registro')
+                                details_list.append("Sin registro / Mes futuro")
+                except Exception as e:
+                    # En caso de cualquier error en el cruce de datos
+                    st.error(f"Error procesando el historial de pagos: {str(e)}")
+                    status_list = ['sin_registro'] * 12
+                    details_list = [f"Error de procesamiento: {str(e)}"] * 12
+                
+                # Renderizar la cuadrícula de 12 casillas secuenciales usando Plotly
+                months_names = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+                months_full = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+                
+                colors = []
+                text_labels = []
+                hover_labels = []
+                
+                for i, status in enumerate(status_list):
+                    m_name = months_names[i]
+                    m_full = months_full[i]
+                    detail = details_list[i]
+                    
+                    if status == 'pagó':
+                        colors.append('#1B8C3E')  # Verde MiBanco
+                        text_labels.append(f"<span style='color: white; font-weight: bold;'>{m_name}</span><br><span style='color: white; font-size: 10px;'>PAGADO</span>")
+                        hover_labels.append(f"<b>Mes:</b> {m_full}<br><b>Estado:</b> {detail}<br><b>Resultado:</b> Cumplido al día<extra></extra>")
+                    elif status == 'mora':
+                        colors.append('#E53E3E')  # Rojo mora
+                        text_labels.append(f"<span style='color: white; font-weight: bold;'>{m_name}</span><br><span style='color: white; font-size: 10px;'>MORA</span>")
+                        hover_labels.append(f"<b>Mes:</b> {m_full}<br><b>Estado:</b> {detail}<br><b>Resultado:</b> En atraso/vencido<extra></extra>")
+                    else:
+                        colors.append('#E2E8F0')  # Gris claro
+                        text_labels.append(f"<span style='color: #7A9088; font-weight: bold;'>{m_name}</span><br><span style='color: #94A3B8; font-size: 10px;'>-</span>")
+                        hover_labels.append(f"<b>Mes:</b> {m_full}<br><b>Estado:</b> {detail}<extra></extra>")
+                
+                fig_timeline = go.Figure(go.Bar(
+                    x=months_names,
+                    y=[1] * 12,
+                    text=text_labels,
+                    textposition='inside',
+                    insidetextanchor='middle',
+                    marker_color=colors,
+                    hoverinfo='text',
+                    hovertext=hover_labels,
+                    showlegend=False
+                ))
+                
+                fig_timeline.update_layout(
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font=dict(family="Outfit, sans-serif", size=12, color="#1A3A2A"),
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    height=130,
+                    xaxis=dict(
+                        showgrid=False,
+                        showline=False,
+                        showticklabels=True,
+                        tickfont=dict(color="#1A3A2A", size=11, family="Outfit"),
+                        fixedrange=True
+                    ),
+                    yaxis=dict(
+                        showgrid=False,
+                        showline=False,
+                        showticklabels=False,
+                        fixedrange=True
+                    ),
+                    bargap=0.15
+                )
+                
+                st.plotly_chart(fig_timeline, use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # PÁGINA 4: 📊 ANÁLISIS E INSIGHTS
@@ -851,7 +1033,7 @@ elif current_page == "📊 Análisis e Insights":
     # Grid de KPIs avanzados del optimizador
     k_col1, k_col2, k_col3 = st.columns(3)
     
-    vne_azar = 327745.08
+    vne_azar = VNE_AZAR_GLOBAL
     vne_opt = df_scheduled['Valor_Esperado_Neto'].sum()
     valor_agregado = vne_opt - vne_azar
     pct_agregado = (vne_opt / vne_azar - 1) * 100
@@ -985,10 +1167,8 @@ elif current_page == "📊 Análisis e Insights":
     
     st.plotly_chart(fig_curve, use_container_width=True)
 
-    # 4. NUEVA IMPLEMENTACIÓN: "Gráfico de Retorno/Ahorro por Canal"
+    # 4. NUEVA IMPLEMENTACIÓN: "Gráfico de Retorno/Ahorro por Canal" y "Ahorro por Región y Zona"
     with st.container():
-        st.subheader("📊 Análisis de Retorno y Ahorro por Canal de Contacto")
-        
         # Cargar los datasets requeridos para el cálculo
         df_cates_proc = df_scores if df_scores is not None else load_cate_scores()
         
@@ -1003,33 +1183,80 @@ elif current_page == "📊 Análisis e Insights":
             m_df = pd.merge(df_opt_proc, df_cates_proc, on='Cliente_ID', suffixes=('', '_cate'))
             
             # Filtrar Control, ya que no tiene costo ni contacto activo
-            m_df = m_df[m_df['Canal_Asignado'] != 'Control']
+            m_df_filtered = m_df[m_df['Canal_Asignado'] != 'Control']
             
-            # Agrupar métricas por canal
-            summary_channel = m_df.groupby('Canal_Asignado').agg(
+            # Agrupar métricas por canal para CobraIQ
+            summary_channel = m_df_filtered.groupby('Canal_Asignado').agg(
                 Retorno_Neto_VNE=('Valor_Esperado_Neto', 'sum'),
             ).reset_index()
             
-            # Traducir los nombres a español si es necesario
-            summary_channel['Canal'] = summary_channel['Canal_Asignado']
+            # Calcular VNE Tradicional (Random) por canal
+            canales_activos = ["WhatsApp", "SMS", "Llamada", "Campo"]
+            costs = {
+                "Control": 0.00,
+                "WhatsApp": 0.10,
+                "SMS": 0.20,
+                "Llamada": 1.50,
+                "Campo": 8.00
+            }
+            budget = 5000.0
+            costo_promedio_azar = sum(costs[c] for c in canales_activos) / len(canales_activos)
+            n_contactos_posibles = budget / costo_promedio_azar
+            contactos_por_canal = n_contactos_posibles / len(canales_activos)
             
-            # Gráfico de barras horizontales utilizando Plotly Express para el Retorno Neto
+            deuda_promedio = df_cates_proc['Deuda_Expuesta'].mean()
+            
+            random_vne_dict = {}
+            for canal in canales_activos:
+                uplift_promedio = df_cates_proc[f'Uplift_{canal}'].mean()
+                vne_promedio_canal = (uplift_promedio * deuda_promedio) - costs[canal]
+                random_vne_dict[canal] = vne_promedio_canal * contactos_por_canal
+                
+            # Combinar datos en estructura larga para Plotly Express
+            data_comparison = []
+            for idx, row in summary_channel.iterrows():
+                canal = row['Canal_Asignado']
+                vne_cobra = row['Retorno_Neto_VNE']
+                vne_rand = random_vne_dict.get(canal, 0.0)
+                
+                # Registro para CobraIQ (Optimizador)
+                data_comparison.append({
+                    'Canal': canal,
+                    'Retorno (VNE)': vne_cobra,
+                    'Estrategia': 'CobraIQ (Optimizador)'
+                })
+                # Registro para Tradicional (Azar)
+                data_comparison.append({
+                    'Canal': canal,
+                    'Retorno (VNE)': vne_rand,
+                    'Estrategia': 'Tradicional (Azar)'
+                })
+                
+            df_plot_comparison = pd.DataFrame(data_comparison)
+            
+            # Gráfico de barras agrupadas horizontales utilizando Plotly Express para comparar estrategias
             fig_bar_retorno = px.bar(
-                summary_channel,
-                x='Retorno_Neto_VNE',
+                df_plot_comparison,
+                x='Retorno (VNE)',
                 y='Canal',
+                color='Estrategia',
                 orientation='h',
-                color_discrete_sequence=['#1B8C3E'],  # Verde corporativo de MiBanco
+                barmode='group',
+                color_discrete_map={
+                    'CobraIQ (Optimizador)': '#1B8C3E',  # Verde corporativo MiBanco
+                    'Tradicional (Azar)': '#7A9088'      # Gris acento
+                },
                 text_auto='.2s',
                 labels={
-                    'Retorno_Neto_VNE': 'Retorno Neto (VNE) (S/)',
-                    'Canal': 'Canal de Contacto'
+                    'Retorno (VNE)': 'Retorno Neto (VNE) (S/)',
+                    'Canal': 'Canal de Contacto',
+                    'Estrategia': 'Estrategia'
                 }
             )
             
             fig_bar_retorno.update_layout(
                 title=dict(
-                    text="Retorno Neto (VNE) Optimizado por Canal de Contacto",
+                    text="Retorno Neto (VNE): CobraIQ vs. Tradicional",
                     font=dict(size=14, color="#1A3A2A", family="Outfit", weight="bold")
                 ),
                 paper_bgcolor='rgba(0,0,0,0)',
@@ -1038,10 +1265,110 @@ elif current_page == "📊 Análisis e Insights":
                 margin=dict(l=20, r=20, t=50, b=20),
                 xaxis=dict(showgrid=True, gridcolor="#E5F3EB", showline=True, linecolor="#D5E8DC", tickcolor="#D5E8DC"),
                 yaxis=dict(showgrid=False, showline=True, linecolor="#D5E8DC", tickcolor="#D5E8DC", categoryorder="total ascending"),
-                showlegend=False
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=-0.25,
+                    xanchor="center",
+                    x=0.5
+                )
             )
             
-            # Mostrar gráfico responsivo
-            st.plotly_chart(fig_bar_retorno, use_container_width=True)
+            # Gráfico de barras agrupadas para comparar estrategias CobraIQ vs Tradicional por Región
+            # Eje X: Region
+            # Eje Y: Ahorro/Retorno (VNE sum)
+            # Leyenda/Color: Estrategia (CobraIQ vs Tradicional)
+            # Al pasar el cursor por CobraIQ, se visualiza el desglose Urbano/Rural
+            total_clients = len(df_cates_proc)
+            regions = df_opt_proc['Region'].dropna().unique()
+            
+            data_region_comparison = []
+            for r in regions:
+                df_r_opt = df_opt_proc[df_opt_proc['Region'] == r]
+                vne_cobra = df_r_opt['Valor_Esperado_Neto'].sum()
+                vne_urbano = df_r_opt[df_r_opt['Zona'].str.lower() == 'urbano']['Valor_Esperado_Neto'].sum()
+                vne_rural = df_r_opt[df_r_opt['Zona'].str.lower() == 'rural']['Valor_Esperado_Neto'].sum()
+                
+                # Tradicional VNE por Región (Random)
+                r_scores = df_cates_proc[df_cates_proc['Region'] == r]
+                n_region = len(r_scores)
+                n_contactos_region = n_contactos_posibles * (n_region / total_clients)
+                contactos_por_canal_region = n_contactos_region / 4
+                deuda_promedio_region = r_scores['Deuda_Expuesta'].mean()
+                
+                vne_rand = 0.0
+                for c in canales_activos:
+                    uplift_prom = r_scores[f'Uplift_{c}'].mean()
+                    vne_prom_canal = (uplift_prom * deuda_promedio_region) - costs[c]
+                    vne_rand += vne_prom_canal * contactos_por_canal_region
+                
+                # Registro para CobraIQ (Optimizador)
+                data_region_comparison.append({
+                    'Región': r,
+                    'Retorno (VNE)': vne_cobra,
+                    'Estrategia': 'CobraIQ (Optimizador)',
+                    'Detalle_Zona': f"<b>Urbano:</b> S/ {vne_urbano:,.2f}<br><b>Rural:</b> S/ {vne_rural:,.2f}"
+                })
+                
+                # Registro para Tradicional (Azar)
+                data_region_comparison.append({
+                    'Región': r,
+                    'Retorno (VNE)': vne_rand,
+                    'Estrategia': 'Tradicional (Azar)',
+                    'Detalle_Zona': 'No aplica (Asignación al Azar)'
+                })
+                
+            df_region_plot = pd.DataFrame(data_region_comparison)
+            
+            fig_bar_ahorro = px.bar(
+                df_region_plot,
+                x='Región',
+                y='Retorno (VNE)',
+                color='Estrategia',
+                barmode='group',
+                color_discrete_map={
+                    'CobraIQ (Optimizador)': '#1B8C3E',  # Verde corporativo MiBanco
+                    'Tradicional (Azar)': '#7A9088'      # Gris acento
+                },
+                custom_data=['Detalle_Zona', 'Estrategia'],
+                text_auto='.2s',
+                labels={
+                    'Región': 'Región',
+                    'Retorno (VNE)': 'Ahorro Neto (VNE) (S/)',
+                    'Estrategia': 'Estrategia'
+                }
+            )
+            
+            fig_bar_ahorro.update_traces(
+                hovertemplate='<b>Región:</b> %{x}<br><b>Estrategia:</b> %{customdata[1]}<br><b>Retorno:</b> S/ %{y:,.2f}<br><br>%{customdata[0]}<extra></extra>'
+            )
+            
+            fig_bar_ahorro.update_layout(
+                title=dict(
+                    text="Ahorro por Región: CobraIQ vs. Tradicional",
+                    font=dict(size=14, color="#1A3A2A", family="Outfit", weight="bold")
+                ),
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(family="Outfit, sans-serif", size=12, color="#1A3A2A"),
+                margin=dict(l=20, r=20, t=50, b=20),
+                xaxis=dict(showgrid=False, showline=True, linecolor="#D5E8DC", tickcolor="#D5E8DC"),
+                yaxis=dict(showgrid=True, gridcolor="#E5F3EB", showline=True, linecolor="#D5E8DC", tickcolor="#D5E8DC"),
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=-0.25,
+                    xanchor="center",
+                    x=0.5
+                )
+            )
+            
+            # Mostrar los dos gráficos en columnas lado a lado
+            col_chart1, col_chart2 = st.columns(2)
+            with col_chart1:
+                st.plotly_chart(fig_bar_retorno, use_container_width=True)
+            with col_chart2:
+                st.plotly_chart(fig_bar_ahorro, use_container_width=True)
+                
         else:
             st.warning("No se pudo cargar el archivo 'cate_scores.parquet' o 'asignacion_optimizada_v2_agenda_20260623_1821.csv' para el cálculo del retorno.")
