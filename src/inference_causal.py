@@ -25,7 +25,18 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import src.config as config
 
-
+# ---------------------------------------------------------------------------
+# DEFINICIÓN DE CLASE PARA DESERIALIZACIÓN (Evita AttributeError en joblib)
+# ---------------------------------------------------------------------------
+class CustomTLearner:
+    def __init__(self, models):
+        self.models = models
+        
+    def effect(self, X, T0=0, T1=1):
+        # LightGBM devuelve un array 1D con predict(), listo para restar
+        pred0 = self.models[T0].predict(X)
+        pred1 = self.models[T1].predict(X)
+        return pred1 - pred0
 # ---------------------------------------------------------------------------
 # 1. CARGA DE ABT_INFERENCIA
 # ---------------------------------------------------------------------------

@@ -12,8 +12,11 @@ Responsabilidades:
 
 import os
 import sys
+import math
 from pathlib import Path
-import datetime  # <-- Agrega esto
+import datetime
+import itertools
+import numpy as np
 import pandas as pd
 import pulp
 
@@ -49,17 +52,16 @@ CALL_FIELD_DAYS = [1, 2, 3, 4, 5]
 DIGITAL_DAYS = [1, 2, 3, 4, 5, 6]
 OPERATING_HOURS = list(range(7, 19))  # slots 07:00-08:00 ... 18:00-19:00
 
-# Distribucion historica de contactabilidad por hora. Se usa para priorizar
-# horarios con mayor probabilidad operativa; no reemplaza al uplift causal.
+def build_operational_slots(days: list[int]) -> list[tuple[int, int]]:
+    """
+    Construye la lista plana de slots operativos (dia, hora) en orden natural
+    Lunes-Sabado, hora 07:00 a 18:00. Esta lista es la base del ciclo
+    Round-Robin que distribuye los contactos uniformemente durante la semana.
 
-HOURLY_WEIGHTS = {
-    1: {8: 0.064, 9: 0.105, 10: 0.111, 11: 0.110, 12: 0.101, 13: 0.093, 14: 0.089, 15: 0.090, 16: 0.092, 17: 0.084, 18: 0.061},
-    2: {8: 0.069, 9: 0.101, 10: 0.110, 11: 0.106, 12: 0.100, 13: 0.090, 14: 0.086, 15: 0.087, 16: 0.096, 17: 0.093, 18: 0.063},
-    3: {8: 0.064, 9: 0.098, 10: 0.108, 11: 0.108, 12: 0.102, 13: 0.092, 14: 0.089, 15: 0.091, 16: 0.093, 17: 0.089, 18: 0.064},
-    4: {8: 0.064, 9: 0.097, 10: 0.109, 11: 0.107, 12: 0.100, 13: 0.092, 14: 0.086, 15: 0.092, 16: 0.097, 17: 0.095, 18: 0.061},
-    5: {8: 0.066, 9: 0.100, 10: 0.109, 11: 0.108, 12: 0.100, 13: 0.092, 14: 0.089, 15: 0.091, 16: 0.095, 17: 0.090, 18: 0.060},
-    6: {8: 0.081, 9: 0.123, 10: 0.144, 11: 0.146, 12: 0.127, 13: 0.091, 14: 0.081, 15: 0.077, 16: 0.069, 17: 0.060, 18: 0.001},
-}
+    El orden es: (Lunes 07), (Lunes 08), ..., (Lunes 18), (Martes 07), ...
+    """
+    return [(day, hour) for day in days for hour in OPERATING_HOURS]
+
 
 def load_scores() -> pd.DataFrame:
     """Carga los scores de inferencia generados en la Fase B.2."""
@@ -183,17 +185,6 @@ def slot_label(hour: int) -> str:
     return f"{hour:02d}:00-{hour + 1:02d}:00"
 
 
-def slot_weight(day: int, hour: int) -> float:
-    # La hora 7 no estaba en la matriz historica provista; se permite por regla
-    # operativa, pero se prioriza por debajo de las horas con historico.
-    return HOURLY_WEIGHTS.get(day, {}).get(hour, 0.030)
-
-
-def ordered_slots(days: list[int]) -> list[tuple[int, int]]:
-    slots = [(day, hour) for day in days for hour in OPERATING_HOURS]
-    return sorted(slots, key=lambda s: (-slot_weight(s[0], s[1]), s[0], s[1]))
-
-
 def normalize_region(value) -> str:
     if pd.isna(value):
         return "SinDato"
@@ -233,6 +224,8 @@ def schedule_field_visit(
       - Cada asesor cubre una sola region por dia porque los asesores se crean
         como pools region-dia.
       - Urbano permite hasta 15 visitas por asesor/dia; rural hasta 10.
+      - Distribucion equitativa: itera primero sobre asesores de todos los dias
+        antes de llenar un solo dia, evitando picos el Lunes.
     """
     region = normalize_region(row.get("Region", "SinDato"))
     zone = normalize_zone(row.get("Zona", "urbano"))
@@ -247,8 +240,11 @@ def schedule_field_visit(
         else capacities.get("campo_visitas_urbano_por_asesor_dia", 15)
     )
 
-    for day in CALL_FIELD_DAYS:
-        for advisor_idx in range(1, advisors + 1):
+    # --- TAREA 2: Distribucion equitativa entre dias L-V ---
+    # Itera advisor_idx primero para repartir entre dias antes de saturar uno.
+    # Orden: (asesor_1, Lunes), (asesor_1, Martes), ..., (asesor_2, Lunes), ...
+    for advisor_idx in range(1, advisors + 1):
+        for day in CALL_FIELD_DAYS:
             advisor_id = f"CAMPO_{region.upper()}_{advisor_idx:02d}"
             key = (day, region, advisor_id)
             current_load = field_state.setdefault(key, 0)
@@ -286,11 +282,22 @@ def schedule_assignments(df_assignment: pd.DataFrame, capacities: dict) -> pd.Da
       - Sabado solo canal digital.
       - Domingo no se agenda.
       - Campo respeta region y limite de visitas por asesor/dia.
+
+    TAREA 2 - Load Balancing Round-Robin:
+      - Los clientes se ordenan por Valor_Esperado_Neto descendente (mayor
+        prioridad primero) independientemente del canal.
+      - Para Llamada, WhatsApp y SMS se usa un generador itertools.cycle sobre
+        los slots operativos disponibles. El primer cliente va al slot 1,
+        el segundo al slot 2, etc. Si un slot alcanza su capacidad maxima,
+        el ciclo lo salta automaticamente.
     """
     df = df_assignment.copy()
-    df["_priority"] = df["Valor_Esperado_Neto"].rank(method="first", ascending=False)
-    df = df.sort_values(["Canal_Asignado", "_priority"])
 
+    # --- TAREA 2: Ordenar globalmente por VNE descendente (no por canal) ---
+    df["_priority"] = df["Valor_Esperado_Neto"].rank(method="first", ascending=False)
+    df = df.sort_values("_priority")
+
+    # Capacidades por slot (diccionarios mutables: se va restando 1 por asignacion)
     call_remaining = build_slot_capacity(
         CALL_FIELD_DAYS,
         capacities.get("llamada_por_hora", 150),
@@ -299,8 +306,32 @@ def schedule_assignments(df_assignment: pd.DataFrame, capacities: dict) -> pd.Da
         DIGITAL_DAYS,
         capacities.get("digital_por_hora", 2000),
     )
-    call_slots = ordered_slots(CALL_FIELD_DAYS)
-    digital_slots = ordered_slots(DIGITAL_DAYS)
+
+    # --- TAREA 2: Generadores ciclicos Round-Robin sobre slots operativos ---
+    # build_operational_slots devuelve slots en orden natural L->S, 07->18.
+    call_cycle = itertools.cycle(build_operational_slots(CALL_FIELD_DAYS))
+    digital_cycle = itertools.cycle(build_operational_slots(DIGITAL_DAYS))
+
+    def next_available_slot(
+        cycle: "itertools.cycle[tuple[int,int]]",
+        remaining: dict,
+        total_slots: int,
+    ) -> tuple[int | None, int | None]:
+        """
+        Avanza el ciclo hasta encontrar un slot con capacidad > 0.
+        Itera como maximo total_slots veces para evitar un bucle infinito
+        si todos los slots estan llenos.
+        """
+        for _ in range(total_slots):
+            day, hour = next(cycle)
+            if remaining[(day, hour)] > 0:
+                remaining[(day, hour)] -= 1
+                return day, hour
+        return None, None
+
+    total_call_slots = len(CALL_FIELD_DAYS) * len(OPERATING_HOURS)
+    total_digital_slots = len(DIGITAL_DAYS) * len(OPERATING_HOURS)
+
     field_state = {}
 
     scheduled_rows = []
@@ -317,7 +348,7 @@ def schedule_assignments(df_assignment: pd.DataFrame, capacities: dict) -> pd.Da
         }
 
         if channel == "Llamada":
-            day, hour = assign_slot_from_capacity(call_remaining, call_slots)
+            day, hour = next_available_slot(call_cycle, call_remaining, total_call_slots)
             if day is not None:
                 schedule.update({
                     "Dia_Semana": DAY_NAMES[day],
@@ -326,14 +357,14 @@ def schedule_assignments(df_assignment: pd.DataFrame, capacities: dict) -> pd.Da
                     "Slot_Asignado": f"{DAY_NAMES[day]} {slot_label(hour)}",
                     "Asesor_Asignado": "CALL_CENTER_POOL",
                     "Estado_Agenda": "AGENDADO",
-                    "Restriccion_Aplicada": "Llamada L-V 07:00-19:00",
+                    "Restriccion_Aplicada": "Llamada L-V 07:00-19:00 (Round-Robin)",
                 })
             else:
                 schedule["Estado_Agenda"] = "SIN_CAPACIDAD"
                 schedule["Restriccion_Aplicada"] = "Sin capacidad call center"
 
         elif channel in {"WhatsApp", "SMS"}:
-            day, hour = assign_slot_from_capacity(digital_remaining, digital_slots)
+            day, hour = next_available_slot(digital_cycle, digital_remaining, total_digital_slots)
             if day is not None:
                 schedule.update({
                     "Dia_Semana": DAY_NAMES[day],
@@ -342,7 +373,7 @@ def schedule_assignments(df_assignment: pd.DataFrame, capacities: dict) -> pd.Da
                     "Slot_Asignado": f"{DAY_NAMES[day]} {slot_label(hour)}",
                     "Asesor_Asignado": "DIGITAL_AUTOMATION",
                     "Estado_Agenda": "AGENDADO",
-                    "Restriccion_Aplicada": "Digital L-S 07:00-19:00; domingo bloqueado",
+                    "Restriccion_Aplicada": "Digital L-S 07:00-19:00 (Round-Robin)",
                 })
             else:
                 schedule["Estado_Agenda"] = "SIN_CAPACIDAD"
@@ -525,47 +556,231 @@ def calcular_baseline_aleatorio(df_scores, df_assignment=None, budget=5000.0):
         
     return vne_aleatorio_total
 
+def extract_dynamic_parameters(
+    df_contactos: pd.DataFrame,
+    df_clientes: pd.DataFrame,
+) -> tuple[dict, float, dict]:
+    """
+    Extrae los parámetros operativos reales desde el historial de contactos
+    de Mibanco. Reemplaza los valores hardcodeados del optimizador.
+
+    Retorna:
+        costs   (dict)  : Costo unitario real por canal (máx histórico).
+        budget  (float) : Presupuesto diario = media_diaria_ultimo_mes * 0.85
+                          (target de ahorro ≥ 10% exigido por el reto).
+        capacities (dict): Capacidades diarias/horarias y dotación de asesores
+                           inferidas del percentil 95 de la operación real.
+    """
+    print("\n" + "-" * 60)
+    print("  EXTRACCIÓN DE PARÁMETROS DATA-DRIVEN")
+    print("-" * 60)
+
+    # ------------------------------------------------------------------
+    # A. Parseo de fechas y horas
+    # ------------------------------------------------------------------
+    df = df_contactos.copy()
+    df["fecha_dt"] = pd.to_datetime(df["fecha_contacto"], dayfirst=True, errors="coerce")
+    df["hora_int"] = pd.to_datetime(
+        df["hora_contacto"], format="%H:%M:%S", errors="coerce"
+    ).dt.hour
+    df = df.dropna(subset=["fecha_dt"])
+
+    # ------------------------------------------------------------------
+    # B. Costos unitarios reales (máximo histórico por canal)
+    # ------------------------------------------------------------------
+    costs_raw = (
+        df.groupby("canal_contacto")["costo_contacto"]
+        .max()
+        .to_dict()
+    )
+    # Mapear a clave Title-case que usa PuLP; agregar Control = 0
+    canal_map = {"whatsapp": "WhatsApp", "sms": "SMS", "llamada": "Llamada", "campo": "Campo"}
+    costs = {"Control": 0.0}
+    for raw_key, title_key in canal_map.items():
+        costs[title_key] = float(costs_raw.get(raw_key, 0.0))
+
+    print("\n  [COSTOS] Costos unitarios reales por canal (máx histórico):")
+    for ch, c in costs.items():
+        print(f"    {ch:<12}: S/ {c:.2f}")
+
+    # ------------------------------------------------------------------
+    # C. Presupuesto diario (media último mes × 0.85)
+    # ------------------------------------------------------------------
+    fecha_max = df["fecha_dt"].max()
+    fecha_inicio_ultimo_mes = fecha_max - pd.DateOffset(months=1)
+    df_ultimo_mes = df[df["fecha_dt"] >= fecha_inicio_ultimo_mes]
+
+    gasto_diario = df_ultimo_mes.groupby("fecha_dt")["costo_contacto"].sum()
+    media_gasto_diario = gasto_diario.mean()
+    budget = media_gasto_diario * 0.85
+
+    print(f"\n  [PRESUPUESTO] Ultimo mes: {fecha_inicio_ultimo_mes.date()} -> {fecha_max.date()}")
+    print(f"    Gasto diario promedio histórico : S/ {media_gasto_diario:,.2f}")
+    print(f"    Presupuesto diario inferido (-15%): S/ {budget:,.2f}")
+    ahorro_pct = (1 - budget / media_gasto_diario) * 100
+    print(f"    Ahorro aplicado                 : {ahorro_pct:.1f}% (reto exige >10%)")
+
+    # ------------------------------------------------------------------
+    # D. Capacidades diarias por canal (percentil 95)
+    # ------------------------------------------------------------------
+    daily_by_canal = (
+        df.groupby(["fecha_dt", "canal_contacto"])
+        .size()
+        .reset_index(name="n_contactos")
+    )
+    cap_diaria = (
+        daily_by_canal.groupby("canal_contacto")["n_contactos"]
+        .quantile(0.95)
+        .apply(math.ceil)
+        .to_dict()
+    )
+
+    print("\n  [CAPACIDADES DIARIAS] Percentil 95 de contactos por canal/día:")
+    for ch, cap in cap_diaria.items():
+        print(f"    {ch:<12}: {cap:,} contactos/día")
+
+    # ------------------------------------------------------------------
+    # E. Capacidades horarias (percentil 95)
+    # ------------------------------------------------------------------
+    DIGITAL_CANALS = {"whatsapp", "sms"}
+    CALL_FIELD_CANALS = {"llamada", "campo"}
+
+    df["es_digital"] = df["canal_contacto"].isin(DIGITAL_CANALS)
+
+    hourly_digital = (
+        df[df["es_digital"]]
+        .groupby(["fecha_dt", "hora_int"])
+        .size()
+        .reset_index(name="n")
+    )
+    hourly_llamada = (
+        df[df["canal_contacto"].isin(CALL_FIELD_CANALS)]
+        .groupby(["fecha_dt", "hora_int"])
+        .size()
+        .reset_index(name="n")
+    )
+
+    llamada_por_hora = int(math.ceil(
+        hourly_llamada["n"].quantile(0.95)
+    )) if len(hourly_llamada) > 0 else 150
+
+    digital_por_hora = int(math.ceil(
+        hourly_digital["n"].quantile(0.95)
+    )) if len(hourly_digital) > 0 else 2000
+
+    print("\n  [CAPACIDADES HORARIAS] Percentil 95:")
+    print(f"    Llamada/Campo por hora : {llamada_por_hora:,}")
+    print(f"    Digital por hora       : {digital_por_hora:,}")
+
+    # ------------------------------------------------------------------
+    # F. Asesores de campo por región (P95 visitas/día ÷ 15, redondeado arriba)
+    # ------------------------------------------------------------------
+    MAX_VISITAS_ASESOR_URBANO = 15
+
+    # Cruzar contactos campo con región del cliente
+    df_campo = df[df["canal_contacto"] == "campo"].copy()
+    if "region" not in df_campo.columns:
+        # Seleccionar columnas que existan en df_clientes
+        cols_clientes = [c for c in ["cliente_id", "region"] if c in df_clientes.columns]
+        if len(cols_clientes) == 2:
+            df_campo = df_campo.merge(
+                df_clientes[cols_clientes],
+                on="cliente_id",
+                how="left",
+            )
+        else:
+            df_campo["region"] = "SinDato"
+
+    df_campo["region"] = df_campo["region"].fillna("SinDato").str.strip().str.title()
+
+    visitas_region_dia = (
+        df_campo.groupby(["fecha_dt", "region"])
+        .size()
+        .reset_index(name="visitas")
+    )
+    p95_visitas = (
+        visitas_region_dia.groupby("region")["visitas"]
+        .quantile(0.95)
+    )
+    asesores_por_region = {
+        region: max(1, math.ceil(p95 / MAX_VISITAS_ASESOR_URBANO))
+        for region, p95 in p95_visitas.items()
+    }
+    # Garantizar fallback para regiones no observadas
+    asesores_por_region.setdefault("SinDato", 2)
+
+    print("\n  [CAMPO] Asesores inferidos por región (P95 visitas/día ÷ 15):")
+    for region, n_asesores in sorted(asesores_por_region.items()):
+        p95_val = p95_visitas.get(region, 0)
+        print(f"    {region:<15}: {p95_val:.0f} visitas P95 -> {n_asesores} asesores")
+
+    # ------------------------------------------------------------------
+    # G. Ensamblar diccionario capacities
+    # ------------------------------------------------------------------
+    capacities = {
+        "llamada"  : cap_diaria.get("llamada", 2000),
+        "campo"    : cap_diaria.get("campo", 500),
+        "whatsapp" : cap_diaria.get("whatsapp", 10000),
+        "sms"      : cap_diaria.get("sms", 20000),
+        "llamada_por_hora"  : llamada_por_hora,
+        "digital_por_hora"  : digital_por_hora,
+        "campo_asesores_por_region"            : asesores_por_region,
+        "campo_visitas_urbano_por_asesor_dia"  : 15,
+        "campo_visitas_rural_por_asesor_dia"   : 10,
+    }
+
+    print("\n  [CAPACIDADES DIARIAS FINALES]")
+    for k in ["llamada", "whatsapp", "sms", "campo"]:
+        print(f"    {k:<12}: {capacities[k]:,} contactos/día")
+    print("-" * 60)
+
+    return costs, budget, capacities
+
+
 def main():
     print("\n" + "="*60)
     print(" AGENTE ORQUESTADOR NBA - FASE C: OPTIMIZACIÓN MATEMÁTICA")
     print("="*60)
 
     try:
-        # 1. Cargar datos
-        print("\n[1/3] Ingiriendo scores de propensión causal...")
+        # 1. Cargar datos de scores y datos crudos para extracción de parámetros
+        print("\n[1/4] Ingiriendo scores de propensión causal...")
         df_scores = load_scores()
-        
-        # 2. Definir parámetros (Podrían venir de un config file en producción)
-        budget = 5000.0  
-        capacities = {
-            'llamada': 2000, 
-            'campo': 500,    
-            'whatsapp': 10000, 
-            'sms': 20000,
-            'llamada_por_hora': 150,
-            'digital_por_hora': 2000,
-            'campo_asesores_por_region': {
-                'Lima': 8,
-                'Norte': 4,
-                'Sur': 4,
-                'Centro': 4,
-                'SinDato': 2,
-            },
-            'campo_visitas_urbano_por_asesor_dia': 15,
-            'campo_visitas_rural_por_asesor_dia': 10,
-        }
-        
-        # 3. Ejecutar Agente
-        print("\n[2/4] Ejecutando motor de optimización prescriptiva...")
+
+        # 2. Cargar datos crudos para extraer parámetros operativos reales
+        print("\n[2/4] Cargando datos históricos para extracción de parámetros...")
+        contactos_path = config.RAW_DIR / config.RAW_CONTACTOS
+        clientes_path  = config.RAW_DIR / config.RAW_CLIENTES
+
+        if not contactos_path.exists():
+            raise FileNotFoundError(f"No se encontró {contactos_path}")
+        if not clientes_path.exists():
+            raise FileNotFoundError(f"No se encontró {clientes_path}")
+
+        df_contactos = pd.read_csv(contactos_path, sep=";", low_memory=False)
+        df_clientes  = pd.read_csv(clientes_path,  sep=",", low_memory=False)
+        print(f"  [OK] Contactos: {df_contactos.shape[0]:,} filas")
+        print(f"  [OK] Clientes : {df_clientes.shape[0]:,} filas")
+
+        # 3. Extraer parámetros data-driven y actualizar COSTS global
+        dynamic_costs, budget, capacities = extract_dynamic_parameters(
+            df_contactos, df_clientes
+        )
+        # Sobrescribir el diccionario global COSTS con los valores reales
+        global COSTS
+        COSTS.update(dynamic_costs)
+
+        # 4. Ejecutar Agente
+        print("\n[3/4] Ejecutando motor de optimización prescriptiva...")
         df_assignment = run_optimization(df_scores, budget, capacities)
         print_channel_assignment_kpis(df_assignment)
         
-        # 4. Agendar y exportar
-        print("\n[3/4] Agendando contactos por dia/hora segun restricciones operativas...")
+        # 5. Agendar y exportar
+        print("\n[4/4] Agendando contactos por dia/hora segun restricciones operativas...")
         df_scheduled = schedule_assignments(df_assignment, capacities)
         print_schedule_kpis(df_scheduled)
 
-        print("\n[4/4] Guardando matriz de asignación final...")
+        print("\nGuardando matriz de asignación final...")
         os.makedirs(PROCESSED_DIR, exist_ok=True)
         # Generar sufijo único con la hora exacta
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
