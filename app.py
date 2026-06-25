@@ -23,6 +23,7 @@ import plotly.graph_objects as go
 ROOT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT_DIR))
 import src.config as config
+import auth
 
 # Configuración de página
 st.set_page_config(
@@ -31,6 +32,13 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# ---------------------------------------------------------------------------
+# CONTROL DE AUTENTICACIÓN Y SESIÓN NATIVO
+# ---------------------------------------------------------------------------
+if not st.session_state.get('authenticated', False):
+    auth.render_login()
+    st.stop()
 
 # ---------------------------------------------------------------------------
 # 1. CARGA DE DATOS CON CACHÉ
@@ -74,31 +82,7 @@ def load_cate_scores():
     return pd.read_parquet(path)
 
 
-@st.cache_data
-def get_saturation_data():
-    """Carga y procesa la data de entrenamiento para construir la curva de agobio."""
-    path = ROOT_DIR / "data" / "02_interim" / "ABT_Train.parquet"
-    if not path.exists():
-        return None
-    df = pd.read_parquet(path)
-    
-    # Filtrar a canales activos (WhatsApp: 1, SMS: 2, Llamada: 3, Campo: 4)
-    df_active = df[df['canal_contacto'].isin([1, 2, 3, 4])].copy()
-    
-    # Agrupar por canal e intento
-    grouped = df_active.groupby(['canal_contacto', 'intento_num']).agg(
-        tasa_pago=('pago_7d_post_contacto', 'mean'),
-        clientes=('cliente_id', 'count')
-    ).reset_index()
-    
-    # Quedarse con intento_num <= 10 para evitar ruido de colas
-    grouped = grouped[grouped['intento_num'] <= 10]
-    
-    channel_map = {1: 'WhatsApp', 2: 'SMS', 3: 'Llamada', 4: 'Campo'}
-    grouped['Canal'] = grouped['canal_contacto'].map(channel_map)
-    grouped['tasa_pago_pct'] = grouped['tasa_pago'] * 100
-    
-    return grouped
+# (get_saturation_data fue eliminado por limpieza de gráficos antiguos)
 
 
 # Carga de datasets
@@ -265,6 +249,30 @@ st.markdown("""
         font-size: 1.1rem !important;
         margin: 0 !important;
     }
+    
+    /* Estilo para el botón de Cerrar Sesión en el Sidebar */
+    .sidebar-logout-container div.stButton > button {
+        background-color: transparent !important;
+        color: #7A9088 !important;
+        border: 1.5px solid #D5E8DC !important;
+        border-radius: 10px !important;
+        font-weight: 600 !important;
+        font-size: 13.5px !important;
+        width: 100% !important;
+        padding: 10px 14px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 8px !important;
+        transition: all 0.2s ease-in-out !important;
+        box-shadow: none !important;
+    }
+    
+    .sidebar-logout-container div.stButton > button:hover {
+        background-color: #FFF5F5 !important;
+        color: #C53030 !important;
+        border-color: #FEB2B2 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -299,6 +307,23 @@ with st.sidebar:
     """, unsafe_allow_html=True)
     
     st.markdown("<hr style='margin: 15px 0; border-color: #D5E8DC;'>", unsafe_allow_html=True)
+    
+    # Perfil de usuario autenticado
+    username = st.session_state.get('username', 'Colaborador')
+    user_area = st.session_state.get('user_area', 'Gestión de Cobranzas')
+    initials = "".join([part[0] for part in username.split()[:2]]).upper()
+    
+    st.markdown(f"""
+    <div style="display: flex; align-items: center; gap: 12px; background-color: #FAFAFA; border: 1px solid #D5E8DC; border-radius: 10px; padding: 10px 12px; margin-top: 5px; margin-bottom: 15px;">
+        <div style="background: linear-gradient(135deg, #1B8C3E, #4FC97A); color: #ffffff; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; border: 1px solid #D5E8DC;">
+            {initials}
+        </div>
+        <div style="line-height: 1.2;">
+            <div style="font-size: 13px; font-weight: 700; color: #1A3A2A;">{username.split()[0]}</div>
+            <div style="font-size: 10.5px; color: #7A9088;">{user_area}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Menú de selección vertical
     current_page = st.radio(
@@ -344,6 +369,19 @@ with st.sidebar:
             <span style="color: #C53030; font-size: 13px;">Error: Datos no cargados.</span>
         </div>
         """, unsafe_allow_html=True)
+        
+    # Botón de Cerrar Sesión al final del Sidebar
+    st.markdown("<hr style='margin: 15px 0; border-color: #D5E8DC;'>", unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-logout-container">', unsafe_allow_html=True)
+    if st.button("🚪 Cerrar Sesión", key="btn_sidebar_logout"):
+        # Limpiar variables de sesión y redirigir
+        st.session_state.pop('username', None)
+        st.session_state.pop('user_email', None)
+        st.session_state.pop('user_area', None)
+        st.session_state['authenticated'] = False
+        st.session_state['auth_screen'] = 'login'
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # DECLARACIÓN DEL DIALOG MODAL (POP-UP MATEMÁTICO)
@@ -865,7 +903,7 @@ elif current_page == "📊 Análisis e Insights":
     st.markdown("<hr style='border-color: #D5E8DC; margin: 15px 0;'>", unsafe_allow_html=True)
     
     # PESTAÑA INSIGHTS - GRÁFICOS
-    st.markdown("### 📈 Curva de Optimización de Costos y Saturación")
+    st.markdown("### 📈 Curva de Optimización de Costos")
     
     # Calcular y graficar la Curva de Costo vs. Efectividad Acumulada
     def get_cost_effectiveness_data(df):
@@ -964,48 +1002,63 @@ elif current_page == "📊 Análisis e Insights":
     
     st.plotly_chart(fig_curve, use_container_width=True)
 
-    # 4. NUEVO GRÁFICO DILÍCITO: Curva de Saturación Causal y Efecto Agobio por Canal
-    df_sat = get_saturation_data()
-    if df_sat is not None:
-        fig_sat = px.line(
-            df_sat,
-            x='intento_num',
-            y='tasa_pago_pct',
-            color='Canal',
-            color_discrete_map={
-                'WhatsApp': '#1B8C3E',
-                'SMS': '#4FC97A',
-                'Llamada': '#2A5C91',
-                'Campo': '#D97706'
-            },
-            markers=True,
-            title="Curva de Saturación Causal y Efecto Agobio (Línea Roja)",
-            labels={
-                'intento_num': 'Número de Intentos de Contacto Semanales', 
-                'tasa_pago_pct': 'Tasa de Pago Observada (%)'
-            }
-        )
+    # 4. NUEVA IMPLEMENTACIÓN: "Gráfico de Retorno/Ahorro por Canal"
+    with st.container():
+        st.subheader("📊 Análisis de Retorno y Ahorro por Canal de Contacto")
         
-        # Añadir línea roja vertical de saturación/agobio
-        fig_sat.add_vline(
-            x=3,
-            line_width=2.5,
-            line_dash="dash",
-            line_color="#C53030",
-            annotation_text="Línea Roja: Límite de Agobio (Caída en la respuesta)",
-            annotation_position="top left",
-            annotation_font=dict(color="#C53030", size=11, family="Outfit")
-        )
+        # Cargar los datasets requeridos para el cálculo
+        df_cates_proc = df_scores if df_scores is not None else load_cate_scores()
         
-        fig_sat.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            font=dict(family="Outfit, sans-serif", size=12, color="#1A3A2A"),
-            margin=dict(l=20, r=20, t=50, b=20),
-            xaxis=dict(showgrid=True, gridcolor="#E5F3EB", showline=True, linecolor="#D5E8DC", tickcolor="#D5E8DC", dtick=1),
-            yaxis=dict(showgrid=True, gridcolor="#E5F3EB", showline=True, linecolor="#D5E8DC", tickcolor="#D5E8DC")
-        )
+        # Cargar el archivo de asignación optimizada específico solicitado
+        processed_dir = ROOT_DIR / "data" / "03_processed"
+        specific_csv_path = processed_dir / "asignacion_optimizada_v2_agenda_20260623_1821.csv"
         
-        st.plotly_chart(fig_sat, use_container_width=True)
-    else:
-        st.info("No se encontró el archivo de entrenamiento para calcular la curva de saturación.")
+        if specific_csv_path.exists() and df_cates_proc is not None:
+            df_opt_proc = pd.read_csv(specific_csv_path)
+            
+            # Unir datasets por Cliente_ID
+            m_df = pd.merge(df_opt_proc, df_cates_proc, on='Cliente_ID', suffixes=('', '_cate'))
+            
+            # Filtrar Control, ya que no tiene costo ni contacto activo
+            m_df = m_df[m_df['Canal_Asignado'] != 'Control']
+            
+            # Agrupar métricas por canal
+            summary_channel = m_df.groupby('Canal_Asignado').agg(
+                Retorno_Neto_VNE=('Valor_Esperado_Neto', 'sum'),
+            ).reset_index()
+            
+            # Traducir los nombres a español si es necesario
+            summary_channel['Canal'] = summary_channel['Canal_Asignado']
+            
+            # Gráfico de barras horizontales utilizando Plotly Express para el Retorno Neto
+            fig_bar_retorno = px.bar(
+                summary_channel,
+                x='Retorno_Neto_VNE',
+                y='Canal',
+                orientation='h',
+                color_discrete_sequence=['#1B8C3E'],  # Verde corporativo de MiBanco
+                text_auto='.2s',
+                labels={
+                    'Retorno_Neto_VNE': 'Retorno Neto (VNE) (S/)',
+                    'Canal': 'Canal de Contacto'
+                }
+            )
+            
+            fig_bar_retorno.update_layout(
+                title=dict(
+                    text="Retorno Neto (VNE) Optimizado por Canal de Contacto",
+                    font=dict(size=14, color="#1A3A2A", family="Outfit", weight="bold")
+                ),
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(family="Outfit, sans-serif", size=12, color="#1A3A2A"),
+                margin=dict(l=20, r=20, t=50, b=20),
+                xaxis=dict(showgrid=True, gridcolor="#E5F3EB", showline=True, linecolor="#D5E8DC", tickcolor="#D5E8DC"),
+                yaxis=dict(showgrid=False, showline=True, linecolor="#D5E8DC", tickcolor="#D5E8DC", categoryorder="total ascending"),
+                showlegend=False
+            )
+            
+            # Mostrar gráfico responsivo
+            st.plotly_chart(fig_bar_retorno, use_container_width=True)
+        else:
+            st.warning("No se pudo cargar el archivo 'cate_scores.parquet' o 'asignacion_optimizada_v2_agenda_20260623_1821.csv' para el cálculo del retorno.")
