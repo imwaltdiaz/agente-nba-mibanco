@@ -160,40 +160,129 @@ def split_data(
 # 4. ENTRENAMIENTO DEL MODELO CAUSAL
 # ---------------------------------------------------------------------------
 
+def calculate_ipw(
+    X: pd.DataFrame,
+    T: pd.Series,
+) -> np.ndarray:
+    """
+    Calcula los pesos de Inverse Probability Weighting (IPW) para corregir
+    el sesgo de selección histórico de los asesores.
+
+    Entrena un LGBMClassifier rápido (propensity score model) para estimar
+    la probabilidad de que cada observación haya recibido tratamiento activo
+    (T > 0). Las probabilidades se clipa en [0.05, 0.95] para estabilidad
+    numérica y los pesos se calculan como w = 1 / P(T=1 | X).
+
+    Args:
+        X: Matriz de features de entrenamiento.
+        T: Variable de tratamiento (0 = control, >0 = activo).
+
+    Retorna:
+        np.ndarray: Array de pesos IPW de longitud len(X).
+    """
+    from lightgbm import LGBMClassifier
+
+    # Variable binaria: 1 si el cliente recibió algún tratamiento activo
+    T_binary = (T > 0).astype(int)
+
+    propensity_model = LGBMClassifier(
+        n_estimators=100,
+        max_depth=4,
+        learning_rate=0.05,
+        num_leaves=15,
+        min_child_samples=20,
+        random_state=config.RANDOM_STATE,
+        verbose=-1,
+    )
+    propensity_model.fit(X.values, T_binary.values)
+
+    # P(T_activo=1 | X): probabilidad de recibir tratamiento activo
+    propensities = propensity_model.predict_proba(X.values)[:, 1]
+
+    # Clipping para estabilidad numérica (evita pesos explosivos)
+    propensities = np.clip(propensities, 0.05, 0.95)
+
+    # w = 1 / P(T=1 | X): mayor peso a observaciones sub-representadas
+    weights = 1.0 / propensities
+
+    print(
+        f"  [IPW] Propensity scores calculados:"
+        f" media={propensities.mean():.3f}"
+        f" | min={propensities.min():.3f}"
+        f" | max={propensities.max():.3f}"
+    )
+    print(
+        f"  [IPW] Pesos IPW:"
+        f" media={weights.mean():.3f}"
+        f" | max={weights.max():.3f}"
+    )
+    return weights
+
+
+class CustomTLearner:
+    """
+    Implementación manual de un T-Learner (Causal Inference) que permite
+    utilizar pesos por muestra (sample_weight) en cada modelo base.
+    """
+    def __init__(self, models: dict):
+        self.models = models
+
+    def effect(self, X, T0=0, T1=1) -> np.ndarray:
+        # Predecir con el modelo del tratamiento T1
+        pred_T1 = self.models[T1].predict(X)
+        # Predecir con el modelo del tratamiento T0 (control)
+        pred_T0 = self.models[T0].predict(X)
+        return pred_T1 - pred_T0
+
+
 def train_uplift_model(
     X_train: pd.DataFrame,
     T_train: pd.Series,
     Y_train: pd.Series,
 ) -> object:
-    from econml.metalearners import TLearner
-    # CAMBIO CRÍTICO 1: Usar Regressor en lugar de Classifier
+    """
+    Entrena un TLearner manual (CustomTLearner) con base LGBMRegressor aplicando IPW
+    para corregir el sesgo de selección histórico de los asesores.
+    """
     from lightgbm import LGBMRegressor
 
-    # ... (código de validación)
+    # --- TAREA 1: Calcular pesos IPW para corrección de sesgo ---
+    print("  [IPW] Calculando Propensity Scores para corrección de sesgo...")
+    sample_weights = calculate_ipw(X_train, T_train)
 
-    base_model = LGBMRegressor(
-        n_estimators=300,
-        max_depth=6,
-        learning_rate=0.05,
-        num_leaves=31,
-        min_child_samples=20,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=config.RANDOM_STATE,
-        verbose=-1,
-    )
+    models = {}
+    canales = np.unique(T_train.values)
+    
+    print(f"  [CustomTLearner] Entrenando sub-modelos independientes por canal: {canales}")
+    for canal in canales:
+        mask = (T_train == canal)
+        X_canal = X_train[mask].values
+        Y_canal = Y_train[mask].values
+        w_canal = sample_weights[mask]
 
-    model = TLearner(models=base_model)
+        print(f"    -> Canal {canal}: {len(X_canal):,} muestras")
 
-    # API de EconML: Y primero, T segundo, X como keyword
-    model.fit(
-        Y_train.values,
-        T_train.values,
-        X=X_train.values,
-    )
+        base_model = LGBMRegressor(
+            n_estimators=300,
+            max_depth=6,
+            learning_rate=0.05,
+            num_leaves=31,
+            min_child_samples=20,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=config.RANDOM_STATE,
+            verbose=-1,
+        )
 
-    print("  [OK] Entrenamiento completado.")
-    return model
+        base_model.fit(
+            X_canal,
+            Y_canal,
+            sample_weight=w_canal,
+        )
+        models[canal] = base_model
+
+    print("  [OK] Entrenamiento completado (con corrección IPW manual).")
+    return CustomTLearner(models)
 
 
 # ---------------------------------------------------------------------------
