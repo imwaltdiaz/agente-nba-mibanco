@@ -473,7 +473,7 @@ if current_page == "🏠 Dashboard Ejecutivo":
         <div class="kpi-container">
             <div class="kpi-header">Costo Campaña</div>
             <div class="kpi-val">S/ {costo_total:,.2f}</div>
-            <div class="kpi-subtext" style="color: #C53030;">Presupuesto: S/ 5,000</div>
+            <div class="kpi-subtext" style="color: #1B8C3E;">Presupuesto: S/ 7,000</div>
         </div>
         """, unsafe_allow_html=True)
         
