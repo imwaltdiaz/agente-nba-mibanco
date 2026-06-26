@@ -587,7 +587,9 @@ if current_page == "🏠 Dashboard Ejecutivo":
         )
         
         fig_pie.update_traces(
-            textinfo='percent',
+            textinfo='label+value+percent',
+            texttemplate='<br>%{value:,} clientes<br>%{percent}',
+            textposition='inside',
             hovertemplate='<b>Canal:</b> %{label}<br><b>Cantidad:</b> %{value:,}<br><b>Porcentaje:</b> %{percent}<extra></extra>'
         )
         
@@ -663,7 +665,6 @@ elif current_page == "👥 Gestión de Cartera":
     st.markdown("<h2 style='margin-bottom: 20px; color: #1A3A2A;'>👥 Gestión y Planificación de Cartera</h2>", unsafe_allow_html=True)
     
     # Barra de filtros superior
-    st.markdown("<div style='background-color: #ffffff; padding: 15px; border-radius: 12px; border: 1.5px solid #D5E8DC; margin-bottom: 20px;'>", unsafe_allow_html=True)
     f_col1, f_col2, f_col3, f_col4 = st.columns(4)
     
     with f_col1:
@@ -685,8 +686,6 @@ elif current_page == "👥 Gestión de Cartera":
         # Filtro de Estado Agenda
         estado_list = ["Todos"] + list(df_scheduled['Estado_Agenda'].dropna().unique())
         selected_estado = st.selectbox("Estado Agenda", estado_list)
-        
-    st.markdown("</div>", unsafe_allow_html=True)
     
     # Aplicar filtros
     filtered_df = df_scheduled.copy()
