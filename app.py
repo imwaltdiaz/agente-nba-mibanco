@@ -492,7 +492,7 @@ if current_page == "🏠 Dashboard Ejecutivo":
     # Cabecera institucional con gradiente
     st.markdown("""
     <div class="mibanco-header">
-        <h1>🟢 Agente Orquestador NBA - Mibanco</h1>
+        <h1>🟢 Agente Orquestador NBA - CobraIQ</h1>
         <p>Cobranza Inteligente: Optimización Causal del Canal y Momento de Contacto de Cartera</p>
     </div>
     """, unsafe_allow_html=True)
